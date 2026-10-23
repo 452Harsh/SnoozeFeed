@@ -75,7 +75,7 @@ async function visit(tab: Page, url: string): Promise<void> {
   if (/\/(accounts\/login|challenge|checkpoint|accounts\/suspended)/.test(landed)) {
     throw new InstagramBlockedError(`redirected to ${new URL(landed).pathname}`);
   }
-  const text = await tab.evaluate(() => document.body?.innerText.slice(0, 4000) ?? "");
+  const text = await tab.evaluate<string>(`(document.body ? document.body.innerText : "").slice(0, 4000)`);
   if (/please wait a few minutes|try again later|suspicious activity|confirm it'?s you/i.test(text)) {
     throw new InstagramBlockedError(`"${text.match(/[^\n]*(please wait|try again later|suspicious|confirm it)[^\n]*/i)?.[0]?.trim()}"`);
   }
@@ -87,18 +87,9 @@ async function scrapeProfile(tab: Page, username: string, log: (msg: string) => 
   await visit(tab, `https://www.instagram.com/${encodeURIComponent(username)}/`);
   await tab.waitForSelector('a[href*="/p/"], a[href*="/reel/"]', { timeout: 15_000 }).catch(() => false);
 
-  const links = await tab.evaluate((max: number) => {
-    const out: string[] = [];
-    for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>('main a[href*="/p/"], main a[href*="/reel/"]'))) {
-      const m = a.getAttribute("href")?.match(/\/(p|reel)\/([A-Za-z0-9_-]+)/);
-      if (!m) continue;
-      const url = `https://www.instagram.com/${m[1]}/${m[2]}/`;
-      if (!out.includes(url)) out.push(url);
-      if (out.length >= max) break;
-    }
-    return out;
-  }, MAX_POSTS_PER_PAGE);
+  const links = await tab.evaluate<string[]>(PROFILE_LINKS_SCRIPT);
   if (!links.length) throw new Error("No posts visible on the profile (empty page or login wall)");
+  log(`  @${username}: ${links.length} post link(s) on profile`);
 
   const now = Date.now();
   const posts: ScrapedPost[] = [];
@@ -109,15 +100,58 @@ async function scrapeProfile(tab: Page, username: string, log: (msg: string) => 
       log(`  · ${url}: no timestamp found, skipped`);
       continue;
     }
-    if (now - post.postedAt.getTime() > WINDOW_MS) {
-      // Past the pinned slots, the grid is newest-first, so everything after this is older too.
-      if (i >= MAX_PINNED - 1) break;
+    const recent = now - post.postedAt.getTime() <= WINDOW_MS;
+    log(`  · ${url}: ${post.postedAt.toISOString()} ${recent ? "kept" : "older than 24h"}`);
+    if (!recent) {
+      // Slots 0..MAX_PINNED-1 may be pinned (any age). Past them the grid is newest-first,
+      // so everything after an old post is older too.
+      if (i >= MAX_PINNED) break;
       continue;
     }
     posts.push(post);
   }
   return posts;
 }
+
+// In-page scripts are plain strings, not functions: tsx/esbuild inject helpers
+// (e.g. __name) into compiled functions, and those don't exist in the page.
+const PROFILE_LINKS_SCRIPT = `(() => {
+  const out = [];
+  for (const a of document.querySelectorAll('main a[href*="/p/"], main a[href*="/reel/"]')) {
+    const m = (a.getAttribute("href") || "").match(/\\/(p|reel)\\/([A-Za-z0-9_-]+)/);
+    if (!m) continue;
+    const url = "https://www.instagram.com/" + m[1] + "/" + m[2] + "/";
+    if (!out.includes(url)) out.push(url);
+    if (out.length >= ${MAX_POSTS_PER_PAGE}) break;
+  }
+  return out;
+})()`;
+
+const POST_SCRIPT = `(() => {
+  const root = document.querySelector("main") || document.body;
+  const meta = (p) => (document.querySelector('meta[property="' + p + '"]') || {}).content || "";
+  // Alt text must come from this post's own image, not the "more posts" grid below it:
+  // match og:image's filename, else the first image inside the post's article.
+  const ogFile = (meta("og:image").split("?")[0] || "").split("/").pop() || "";
+  const imgs = Array.from(root.querySelectorAll("img[alt]"));
+  const own =
+    (ogFile && imgs.find((img) => (img.getAttribute("src") || "").includes(ogFile))) ||
+    root.querySelector("article img[alt]");
+  const ownAlt = own ? own.alt.trim() : "";
+  const alts = ownAlt.length > 20 && !/profile picture/i.test(ownAlt) ? [ownAlt] : [];
+  const h1 = root.querySelector("h1");
+  return {
+    datetimes: Array.from(
+      (root.querySelector("time[datetime]") ? root : document).querySelectorAll("time[datetime]"),
+    ).map((t) => t.getAttribute("datetime") || ""),
+    caption: h1 ? h1.textContent.trim() : "",
+    ogDescription: meta("og:description"),
+    ogImage: meta("og:image"),
+    altText: alts[0] || "",
+    hasVideo: Boolean(root.querySelector("video")),
+    hasCarousel: Boolean(root.querySelector('button[aria-label="Next"], [aria-label*="Carousel" i]')),
+  };
+})()`;
 
 interface RawPost {
   datetimes: string[];
@@ -130,25 +164,12 @@ interface RawPost {
 }
 
 async function scrapePost(tab: Page, url: string, username: string): Promise<ScrapedPost | null> {
-  await visit(tab, url);
+  // Reels are also served at /p/<code>/, which uses the post layout (with a timestamp);
+  // the /reel/ page has none. Keep the /reel/ URL as the canonical link.
+  await visit(tab, url.replace("/reel/", "/p/"));
   await tab.waitForSelector("time[datetime]", { timeout: 10_000 }).catch(() => false);
 
-  const raw = await tab.evaluate((): RawPost => {
-    const root = document.querySelector("main") ?? document.body;
-    const meta = (p: string) => document.querySelector<HTMLMetaElement>(`meta[property="${p}"]`)?.content ?? "";
-    const alts = Array.from(root.querySelectorAll<HTMLImageElement>("img[alt]"))
-      .map((img) => img.alt.trim())
-      .filter((alt) => alt.length > 20 && !/profile picture/i.test(alt));
-    return {
-      datetimes: Array.from(root.querySelectorAll("time[datetime]")).map((t) => t.getAttribute("datetime") ?? ""),
-      caption: root.querySelector("h1")?.textContent?.trim() ?? "",
-      ogDescription: meta("og:description"),
-      ogImage: meta("og:image"),
-      altText: alts[0] ?? "",
-      hasVideo: Boolean(root.querySelector("video")),
-      hasCarousel: Boolean(root.querySelector('button[aria-label="Next"], [aria-label*="Carousel" i]')),
-    };
-  });
+  const raw = await tab.evaluate<RawPost>(POST_SCRIPT);
 
   // Comments carry later timestamps, so the post's own time is the earliest one on the page.
   const times = raw.datetimes.map((d) => Date.parse(d)).filter((t) => !Number.isNaN(t));
