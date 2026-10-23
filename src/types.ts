@@ -63,4 +63,16 @@ export interface DigestDoc {
   categories: DigestCategory[];
   skipped: (DigestPick & { reason: SkipReason })[];
   failed: { username: string; error: string }[];
+  /** Outcome of the email delivery for this digest, if one was attempted. */
+  email?: EmailResult;
+}
+
+export interface EmailResult {
+  status: "sent" | "skipped" | "failed";
+  provider?: "resend" | "smtp";
+  /** Provider message id when sent. */
+  id?: string;
+  /** Why it was skipped or how it failed. */
+  reason?: string;
+  at: Date;
 }

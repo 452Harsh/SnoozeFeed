@@ -46,7 +46,7 @@ export class AbortRunError extends Error {
 
 const toPick = (p: PostDoc): DigestPick => ({ url: p.url, username: p.username, gist: p.gist });
 
-export async function runPipeline(opts: RunOptions): Promise<DigestDoc> {
+export async function runPipeline(opts: RunOptions): Promise<{ digest: DigestDoc; saved: boolean }> {
   const { cfg, db, ai, source } = opts;
   const now = opts.now ?? new Date();
   const log = opts.log ?? console.log;
@@ -94,7 +94,8 @@ export async function runPipeline(opts: RunOptions): Promise<DigestDoc> {
         doc.gist = g.gist;
         if (g.skip) doc.skip = g.skip;
       } catch (err) {
-        doc.gist = post.caption.slice(0, 140) || "(no caption)";
+        // Slice by code points so an emoji at the cut isn't split into a broken character.
+        doc.gist = Array.from(post.caption).slice(0, 140).join("") || "(no caption)";
         doc.aiError = errorMessage(err);
       }
       await postsCol.replaceOne({ url: doc.url }, doc, { upsert: true });
@@ -147,10 +148,11 @@ export async function runPipeline(opts: RunOptions): Promise<DigestDoc> {
   const digests = db.collection<DigestDoc>(COLLECTIONS.digests);
   const current = await digests.findOne({ date }, { projection: { demo: 1 } });
   if (current && !current.demo && digest.demo) {
-    throw new Error(`A live digest already exists for ${date}; not overwriting it with demo data`);
+    log(`! a live digest already exists for ${date}; demo digest not saved`);
+    return { digest, saved: false };
   }
   await digests.replaceOne({ date }, digest, { upsert: true });
-  return digest;
+  return { digest, saved: true };
 }
 
 async function resolveCategory(

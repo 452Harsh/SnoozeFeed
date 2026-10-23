@@ -21,10 +21,14 @@ export interface Config {
   embed: { provider: string; model: string; apiKey?: string };
   elevenlabs: { apiKey?: string };
   email: {
-    to?: string;
+    /** One or more comma-separated addresses. */
+    to: string[];
+    from: string;
     resendApiKey?: string;
     smtp?: { host: string; port: number; user?: string; pass?: string };
   };
+  /** Public base URL of the web service (no trailing slash), for links in emails. */
+  publicUrl?: string;
   digestTimezone: string;
 }
 
@@ -95,7 +99,9 @@ export function loadConfig(): Config {
     },
     elevenlabs: { apiKey: opt("ELEVENLABS_API_KEY") },
     email: {
-      to: opt("EMAIL_TO"),
+      to: (opt("EMAIL_TO") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      // Resend's shared test sender works without a verified domain (delivers to your own account address).
+      from: opt("EMAIL_FROM") ?? "SlothScroll <onboarding@resend.dev>",
       resendApiKey: opt("RESEND_API_KEY"),
       smtp: smtpHost
         ? {
@@ -106,6 +112,7 @@ export function loadConfig(): Config {
           }
         : undefined,
     },
+    publicUrl: opt("PUBLIC_URL")?.replace(/\/+$/, ""),
     digestTimezone,
   };
 }
@@ -128,4 +135,4 @@ export function requireEmbeddings(): void {
 export const audioEnabled = (c: Config): boolean => Boolean(c.elevenlabs.apiKey);
 
 export const emailEnabled = (c: Config): boolean =>
-  Boolean(c.email.to && (c.email.resendApiKey || c.email.smtp));
+  Boolean(c.email.to.length && (c.email.resendApiKey || c.email.smtp));

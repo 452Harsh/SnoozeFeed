@@ -3,6 +3,7 @@
 import { loadConfig, requireAi, requireBrowserbase } from "../src/config.js";
 import { createGemmaClient } from "../src/ai/client.js";
 import { connect } from "../src/db.js";
+import { deliverDigest } from "../src/email.js";
 import { loadPages } from "../src/pages.js";
 import { runPipeline } from "../src/pipeline.js";
 import { InstagramBlockedError, openScraper, randomDelay } from "../src/scraper.js";
@@ -28,12 +29,14 @@ const fetchPosts = async (page: PageInput) => {
 
 try {
   console.log(`run: ${pages.length} page(s), model ${ai.model}\n`);
-  const digest = await runPipeline({ cfg, db, ai, pages, fetchPosts, source: "instagram" });
+  const { digest, saved } = await runPipeline({ cfg, db, ai, pages, fetchPosts, source: "instagram" });
   console.log(
     `\nsaved digest ${digest.date}: ${digest.stats.pages} pages · ${digest.stats.posts} posts · ` +
       `~${digest.stats.minutesSaved} min saved · ${digest.failed.length} failed ` +
       `(${((Date.now() - started) / 1000).toFixed(0)}s)`,
   );
+  // Optional; never fails the run. The key makes a retried cron run send at most one email per day.
+  await deliverDigest(cfg, db, digest, { saved, idempotencyKey: `slothscroll-digest-${digest.date}` });
 } catch (err) {
   if (err instanceof InstagramBlockedError) {
     console.error(`\nSTOPPED: ${err.message}\nNo digest saved. Not retrying.`);
