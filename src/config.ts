@@ -17,7 +17,7 @@ export type Category = (typeof CATEGORIES)[number];
 export interface Config {
   mongo: { uri: string; db: string };
   browserbase: { apiKey?: string; projectId?: string; contextId?: string };
-  ai: { provider: string; baseUrl?: string; model: string; apiKey?: string };
+  ai: { provider: string; baseUrl?: string; model: string; apiKey?: string; reasoningEffort?: string };
   embed: { provider: string; model: string; apiKey?: string };
   elevenlabs: { apiKey?: string };
   email: {
@@ -86,6 +86,7 @@ export function loadConfig(): Config {
       baseUrl: opt("AI_BASE_URL"),
       model: opt("AI_MODEL") ?? "gemma-4-26b-a4b-it",
       apiKey: opt("AI_API_KEY"),
+      reasoningEffort: opt("AI_REASONING_EFFORT"),
     },
     embed: {
       provider: opt("AI_EMBED_PROVIDER") ?? "huggingface",

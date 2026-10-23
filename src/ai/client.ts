@@ -15,7 +15,7 @@ export interface GemmaClient {
 const TIMEOUT_MS = 90_000;
 
 export function createGemmaClient(cfg: Config): GemmaClient {
-  const { baseUrl, apiKey, model } = cfg.ai;
+  const { baseUrl, apiKey, model, reasoningEffort } = cfg.ai;
   if (!baseUrl) throw new Error("AI_BASE_URL is not set");
   const endpoint = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
 
@@ -31,6 +31,8 @@ export function createGemmaClient(cfg: Config): GemmaClient {
         model,
         temperature: 0.2,
         messages: [{ role: "user", content }],
+        // Provider-specific; Google AI Studio accepts "minimal" for Gemma 4 (skips the <thought> block).
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
