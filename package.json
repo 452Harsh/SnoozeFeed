@@ -10,10 +10,15 @@
   "packageManager": "pnpm@10.34.7",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "start": "node dist/src/server.js",
+    "dev": "tsx watch --env-file=.env.local src/server.ts",
     "db:setup": "tsx --env-file=.env.local scripts/setup-db.ts",
     "demo": "tsx --env-file=.env.local scripts/demo.ts"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.13",
     "mongodb": "^7.7.0"
   },
   "devDependencies": {
