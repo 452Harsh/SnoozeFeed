@@ -5,8 +5,9 @@ import { Hono } from "hono";
 import { loadConfig } from "./config.js";
 import { COLLECTIONS, connect } from "./db.js";
 import { localDate } from "./pipeline.js";
-import type { DigestDoc } from "./types.js";
+import type { DigestDoc, PageDoc, PostDoc } from "./types.js";
 import { renderArchive, renderDigest, renderMessage } from "./web/render.js";
+import { renderFeed } from "./web/rss.js";
 
 const cfg = loadConfig();
 const { client, db } = await connect(cfg);
@@ -30,7 +31,32 @@ app.get("/archive", async (c) => {
   const list = await digests
     .find({}, { projection: { _id: 0, date: 1, demo: 1, stats: 1 }, sort: { date: -1 }, limit: 90 })
     .toArray();
-  return c.html(renderArchive(list));
+  const feeds = await db
+    .collection<PageDoc>(COLLECTIONS.pages)
+    .find({ source: "instagram" }, { projection: { _id: 0, username: 1 }, sort: { username: 1 } })
+    .toArray();
+  return c.html(renderArchive(list, feeds.map((p) => p.username)));
+});
+
+// RSS per Instagram page: /feeds/nasa.xml
+app.get("/feeds/:file", async (c) => {
+  const username = c.req.param("file").match(/^([A-Za-z0-9._]{1,30})\.xml$/)?.[1];
+  if (!username) return c.html(renderMessage("Not found", "Feeds look like /feeds/username.xml."), 404);
+
+  const posts = await db
+    .collection<PostDoc>(COLLECTIONS.posts)
+    .find({ username }, { sort: { postedAt: -1 }, limit: 50 })
+    .toArray();
+  if (!posts.length) return c.html(renderMessage("Not found", `No posts stored for @${username}.`), 404);
+
+  // Render terminates TLS at its proxy, so trust x-forwarded-proto for the self link.
+  const url = new URL(c.req.url);
+  const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(":", "");
+  const selfUrl = `${proto}://${url.host}${url.pathname}`;
+
+  c.header("Content-Type", "application/rss+xml; charset=utf-8");
+  c.header("Cache-Control", "public, max-age=900");
+  return c.body(renderFeed({ username, selfUrl, posts }));
 });
 
 app.get("/digest/:date", async (c) => {

@@ -153,7 +153,7 @@ ${failed}`,
   );
 }
 
-export function renderArchive(digests: Pick<DigestDoc, "date" | "demo" | "stats">[]): string {
+export function renderArchive(digests: Pick<DigestDoc, "date" | "demo" | "stats">[], feeds: string[] = []): string {
   const items = digests.length
     ? `<ul class="archive">${digests
         .map(
@@ -164,7 +164,14 @@ export function renderArchive(digests: Pick<DigestDoc, "date" | "demo" | "stats"
         )
         .join("")}</ul>`
     : `<p class="muted">No digests yet.</p>`;
-  return layout("SlothScroll · Archive", `<header><h1>Archive</h1></header><section class="card">${items}</section>`);
+  const feedList = feeds.length
+    ? `<section class="card"><h2>RSS feeds <span class="count">one per page</span></h2>
+<ul class="list">${feeds.map((u) => `<li><a href="/feeds/${esc(u)}.xml">@${esc(u)}</a></li>`).join("")}</ul></section>`
+    : "";
+  return layout(
+    "SlothScroll · Archive",
+    `<header><h1>Archive</h1></header><section class="card">${items}</section>${feedList}`,
+  );
 }
 
 export function renderMessage(title: string, message: string): string {
