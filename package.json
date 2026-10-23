@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "start": "node dist/src/server.js",
+    "start:cron": "node dist/scripts/run.js",
     "dev": "tsx watch --env-file=.env.local src/server.ts",
     "db:setup": "tsx --env-file=.env.local scripts/setup-db.ts",
     "demo": "tsx --env-file=.env.local scripts/demo.ts",

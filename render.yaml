@@ -1,0 +1,76 @@
+# Render Blueprint: web service (digest page) + daily cron (scrape → Gemma → MongoDB).
+# MongoDB Atlas is external. Every secret is sync: false, so Render asks for it
+# when the Blueprint is first created and it never lives in this file.
+
+services:
+  - type: web
+    name: slothscroll-web
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # The web service only reads digests, so it gets MongoDB and nothing else.
+      - key: NODE_VERSION
+        value: "20"
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        sync: false
+      - key: DIGEST_TIMEZONE
+        value: UTC
+
+  - type: cron
+    name: slothscroll-daily
+    runtime: node
+    plan: starter
+    # UTC. 06:00 UTC daily; change to suit your morning (e.g. "30 1 * * *" = 07:00 IST).
+    schedule: "0 6 * * *"
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start:cron
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Browserbase
+      - key: BROWSERBASE_API_KEY
+        sync: false
+      - key: BROWSERBASE_PROJECT_ID
+        sync: false
+      - key: BROWSERBASE_CONTEXT_ID
+        sync: false
+      # Gemma (OpenAI-compatible)
+      - key: AI_PROVIDER
+        value: openai-compatible
+      - key: AI_BASE_URL
+        sync: false
+      - key: AI_MODEL
+        value: gemma-4-26b-a4b-it
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_REASONING_EFFORT
+        sync: false
+      # EmbeddingGemma (Milestone 7)
+      - key: AI_EMBED_PROVIDER
+        value: huggingface
+      - key: AI_EMBED_MODEL
+        value: google/embeddinggemma-300m
+      - key: AI_EMBED_API_KEY
+        sync: false
+      # ElevenLabs (optional, Milestone 8)
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      # MongoDB Atlas
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        sync: false
+      - key: DIGEST_TIMEZONE
+        value: UTC
+      # Email (optional, Milestone 9)
+      - key: EMAIL_TO
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
