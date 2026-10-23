@@ -14,12 +14,18 @@
     "start": "node dist/src/server.js",
     "dev": "tsx watch --env-file=.env.local src/server.ts",
     "db:setup": "tsx --env-file=.env.local scripts/setup-db.ts",
-    "demo": "tsx --env-file=.env.local scripts/demo.ts"
+    "demo": "tsx --env-file=.env.local scripts/demo.ts",
+    "context:create": "node --env-file=.env.local scripts/create-context.mjs",
+    "scrape:one": "tsx --env-file=.env.local scripts/scrape-one.ts",
+    "run:daily": "tsx --env-file=.env.local scripts/run.ts"
   },
   "dependencies": {
+    "@browserbasehq/sdk": "^2.22.0",
+    "@browserbasehq/stagehand": "^4.3.0",
     "@hono/node-server": "^2.1.5",
     "hono": "^4.13.13",
-    "mongodb": "^7.7.0"
+    "mongodb": "^7.7.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

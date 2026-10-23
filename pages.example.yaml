@@ -1,0 +1,6 @@
+# Copy to pages.yaml and list the public Instagram pages you follow.
+# category is optional; without it Gemma picks one of:
+# News, Tech, Food, Fitness, Finance, Entertainment, Memes, Other
+- username: nasa
+  category: News
+- username: natgeo

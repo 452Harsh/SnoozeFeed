@@ -36,6 +36,14 @@ export function localDate(date: Date, timeZone: string): string {
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+/** Thrown by a post source to stop the whole run (e.g. Instagram blocked us) instead of failing one page. */
+export class AbortRunError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AbortRunError";
+  }
+}
+
 const toPick = (p: PostDoc): DigestPick => ({ url: p.url, username: p.username, gist: p.gist });
 
 export async function runPipeline(opts: RunOptions): Promise<DigestDoc> {
@@ -56,6 +64,7 @@ export async function runPipeline(opts: RunOptions): Promise<DigestDoc> {
     try {
       scraped = await opts.fetchPosts(page);
     } catch (err) {
+      if (err instanceof AbortRunError) throw err;
       failed.push({ username: page.username, error: errorMessage(err) });
       log(`✗ @${page.username}: ${errorMessage(err)}`);
       continue;
