@@ -6,36 +6,47 @@ import { loadConfig } from "./config.js";
 import { COLLECTIONS, connect } from "./db.js";
 import { localDate } from "./pipeline.js";
 import type { DigestDoc, PageDoc, PostDoc } from "./types.js";
-import { renderArchive, renderDigest, renderMessage } from "./web/render.js";
+import { greeting, renderArchive, renderDigest, renderMessage, type ArchiveEntry } from "./web/render.js";
 import { renderFeed } from "./web/rss.js";
 
 const cfg = loadConfig();
 const { client, db } = await connect(cfg);
 const digests = db.collection<DigestDoc>(COLLECTIONS.digests);
+const site = { publicUrl: cfg.publicUrl };
 
 const app = new Hono();
 
 app.get("/healthz", (c) => c.text("ok"));
 
 app.get("/", async (c) => {
-  const today = localDate(new Date(), cfg.digestTimezone);
+  const now = new Date();
+  const today = localDate(now, cfg.digestTimezone);
   const latest = await digests.findOne({}, { sort: { date: -1 } });
   if (!latest) {
-    return c.html(renderMessage("No digest yet", "The first digest appears after the daily run (or pnpm demo)."));
+    return c.html(renderMessage("No digest yet", "The first digest appears after the daily run (or pnpm demo).", site));
   }
   const note = latest.date === today ? undefined : `No digest for today yet. Showing the most recent one.`;
-  return c.html(renderDigest(latest, { note }));
+  return c.html(
+    renderDigest(latest, {
+      note,
+      greeting: greeting(now, cfg.digestTimezone),
+      meta: { ...site, path: "/", current: "today" },
+    }),
+  );
 });
 
 app.get("/archive", async (c) => {
   const list = await digests
-    .find({}, { projection: { _id: 0, date: 1, demo: 1, stats: 1 }, sort: { date: -1 }, limit: 90 })
+    .find<ArchiveEntry>(
+      {},
+      { projection: { _id: 0, date: 1, demo: 1, stats: 1, "categories.category": 1 }, sort: { date: -1 }, limit: 90 },
+    )
     .toArray();
   const feeds = await db
     .collection<PageDoc>(COLLECTIONS.pages)
     .find({ source: "instagram" }, { projection: { _id: 0, username: 1 }, sort: { username: 1 } })
     .toArray();
-  return c.html(renderArchive(list, feeds.map((p) => p.username)));
+  return c.html(renderArchive(list, feeds.map((p) => p.username), site));
 });
 
 // RSS per Instagram page: /feeds/nasa.xml
@@ -65,15 +76,15 @@ app.get("/digest/:date", async (c) => {
     return c.html(renderMessage("Not found", "Dates look like 2026-10-23."), 404);
   }
   const digest = await digests.findOne({ date });
-  if (!digest) return c.html(renderMessage("Not found", `No digest for ${date}.`), 404);
-  return c.html(renderDigest(digest));
+  if (!digest) return c.html(renderMessage("Not found", `No digest for ${date}.`, site), 404);
+  return c.html(renderDigest(digest, { meta: { ...site, path: `/digest/${date}` } }));
 });
 
-app.notFound((c) => c.html(renderMessage("Not found", "That page doesn't exist."), 404));
+app.notFound((c) => c.html(renderMessage("Not found", "That page doesn't exist.", site), 404));
 
 app.onError((err, c) => {
   console.error(err);
-  return c.html(renderMessage("Something went wrong", "Try again in a moment."), 500);
+  return c.html(renderMessage("Something went wrong", "Try again in a moment.", site), 500);
 });
 
 const port = Number(process.env.PORT ?? 3000);
