@@ -1,0 +1,23 @@
+{
+  "name": "slothscroll",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A lazy morning digest of the Instagram pages you follow, powered by Gemma.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "packageManager": "pnpm@10.34.7",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "db:setup": "tsx --env-file=.env.local scripts/setup-db.ts"
+  },
+  "dependencies": {
+    "mongodb": "^7.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
