@@ -1,0 +1,88 @@
+{
+  "_note": "Made-up demo data. No real accounts or people. hoursAgo is relative to when pnpm demo runs.",
+  "failingPages": {
+    "ghostpage.demo": "Profile not found (simulated failure)"
+  },
+  "posts": [
+    {
+      "id": "mw1", "username": "morningwire.demo", "type": "image", "hoursAgo": 2,
+      "caption": "City council approves a pilot for free weekend buses on three routes starting next month. Ridership will be reviewed after 90 days.",
+      "altText": "May be an image of a city bus at a stop"
+    },
+    {
+      "id": "mw2", "username": "morningwire.demo", "type": "carousel", "hoursAgo": 6,
+      "caption": "Heavy rain expected through Thursday. Swipe for the hour-by-hour forecast and which roads flood first.",
+      "altText": "May be an image of a weather map with rain bands"
+    },
+    {
+      "id": "mw3", "username": "morningwire.demo", "type": "reel", "hoursAgo": 11,
+      "caption": "Local library extends hours to 10pm on weekdays after a community petition gathered 4,000 signatures.",
+      "altText": "May be an image of a library reading room"
+    },
+    {
+      "id": "mw4", "username": "morningwire.demo", "type": "image", "hoursAgo": 30,
+      "caption": "Yesterday's top story: the river cleanup drew 600 volunteers.",
+      "altText": "May be an image of people on a riverbank"
+    },
+    {
+      "id": "bs1", "username": "bytesized.demo", "type": "carousel", "hoursAgo": 3,
+      "caption": "5 keyboard shortcuts that save you an hour a week in your code editor. Number 3 changed how I refactor.",
+      "altText": "May be an image of a laptop showing a code editor"
+    },
+    {
+      "id": "bs2", "username": "bytesized.demo", "type": "reel", "hoursAgo": 8,
+      "caption": "Open-weight models now run well on a laptop. Quick test of a small model summarizing a 20-page PDF offline.",
+      "altText": "May be an image of a terminal window with text output"
+    },
+    {
+      "id": "bs3", "username": "bytesized.demo", "type": "image", "hoursAgo": 14,
+      "caption": "🔥🔥🔥 #setup #desksetup #techlife",
+      "altText": "May be an image of a minimal desk with two monitors, a mechanical keyboard and a plant"
+    },
+    {
+      "id": "bs4", "username": "bytesized.demo", "type": "image", "hoursAgo": 20,
+      "caption": "Partnered with a headphone brand 🎧 Use code BYTE20 for 20% off noise-cancelling headphones. #ad #sponsored",
+      "altText": "May be an image of over-ear headphones"
+    },
+    {
+      "id": "cc1", "username": "crumbsandco.demo", "type": "reel", "hoursAgo": 1,
+      "caption": "One-pan lemon garlic pasta in 15 minutes. Full recipe: pasta, 3 garlic cloves, 1 lemon, parmesan, a splash of pasta water.",
+      "altText": "May be an image of pasta in a pan"
+    },
+    {
+      "id": "cc2", "username": "crumbsandco.demo", "type": "image", "hoursAgo": 9,
+      "caption": "😍🍰✨ #sundaybake #homemade",
+      "altText": "May be an image of a layered strawberry sponge cake on a stand"
+    },
+    {
+      "id": "cc3", "username": "crumbsandco.demo", "type": "image", "hoursAgo": 16,
+      "caption": "GIVEAWAY 🎉 Win our new baking kit! Follow us, like this post and tag 3 friends. Winner picked Friday.",
+      "altText": "May be an image of baking tools in a gift box"
+    },
+    {
+      "id": "cc4", "username": "crumbsandco.demo", "type": "carousel", "hoursAgo": 22,
+      "caption": "Meal prep for the week: 4 lunches under 5 dollars each. Swipe for the shopping list.",
+      "altText": "May be an image of four food containers with rice and vegetables"
+    },
+    {
+      "id": "rr1", "username": "repsandrest.demo", "type": "reel", "hoursAgo": 4,
+      "caption": "A 12-minute mobility routine for desk workers. No equipment, do it before lunch.",
+      "altText": "May be an image of a person stretching on a mat"
+    },
+    {
+      "id": "rr2", "username": "repsandrest.demo", "type": "image", "hoursAgo": 12,
+      "caption": "Reposting this from @coachdemo because it's too good: progressive overload explained in one chart. 📸 via @coachdemo",
+      "altText": "May be an image of a chart with rising bars"
+    },
+    {
+      "id": "rr3", "username": "repsandrest.demo", "type": "carousel", "hoursAgo": 18,
+      "caption": "Beginner 3-day strength plan: squat, push, pull. Swipe for sets and reps and how to progress each week.",
+      "altText": "May be an image of a printed workout plan"
+    },
+    {
+      "id": "rr4", "username": "repsandrest.demo", "type": "image", "hoursAgo": 40,
+      "caption": "Rest days matter. Sleep is training too.",
+      "altText": "May be an image of a bed"
+    }
+  ]
+}
