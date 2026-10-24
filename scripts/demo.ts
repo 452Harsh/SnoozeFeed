@@ -86,7 +86,7 @@ try {
   );
 
   if (previewPath) {
-    await writeFile(previewPath, renderEmailHtml(digest, digestUrl(cfg, digest)));
+    await writeFile(previewPath, renderEmailHtml(digest, digestUrl(cfg, digest), { timeZone: cfg.digestTimezone }));
     console.log(`email preview written to ${previewPath}`);
   }
   // Email only on request, so demo runs don't spam the inbox.

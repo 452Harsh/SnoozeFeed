@@ -40,7 +40,7 @@ const dateParts = (date: string) => {
 };
 
 /** Drops replacement characters and half-cut emoji (lone surrogates) left by truncated captions. */
-const clean = (s: string): string => s.replace(/\uFFFD|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "").trim();
+export const clean = (s: string): string => s.replace(/\uFFFD|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "").trim();
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -88,6 +88,9 @@ const SECTION_TITLES: Record<string, string> = {
   memes: "The lighter side",
   other: "Everything else",
 };
+
+/** Fixed section headline for a category, e.g. "On the field" for Sports. */
+export const sectionTitle = (category: string): string => SECTION_TITLES[catSlug(category)] ?? SECTION_TITLES.other!;
 
 /** Scraper errors can be technical; visitors get a short, plain explanation. */
 function friendlyError(error: string): string {
