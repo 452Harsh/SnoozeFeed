@@ -44,7 +44,15 @@ export class AbortRunError extends Error {
   }
 }
 
-const toPick = (p: PostDoc): DigestPick => ({ url: p.url, username: p.username, gist: p.gist });
+const toPick = (p: PostDoc): DigestPick => ({
+  url: p.url,
+  username: p.username,
+  gist: p.gist,
+  ...(p.imageUrl ? { imageUrl: p.imageUrl } : {}),
+  ...(p.altText ? { altText: p.altText } : {}),
+  postedAt: p.postedAt,
+  type: p.type,
+});
 
 export async function runPipeline(opts: RunOptions): Promise<{ digest: DigestDoc; saved: boolean }> {
   const { cfg, db, ai, source } = opts;

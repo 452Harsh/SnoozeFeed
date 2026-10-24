@@ -16,6 +16,16 @@ const site = { publicUrl: cfg.publicUrl };
 
 const app = new Hono();
 
+/** Dates of the editions just before and after `date`, for previous/next links. */
+async function neighbours(date: string): Promise<{ prev?: string; next?: string }> {
+  const opts = { projection: { _id: 0, date: 1 } } as const;
+  const [prev, next] = await Promise.all([
+    digests.findOne({ date: { $lt: date } }, { ...opts, sort: { date: -1 } }),
+    digests.findOne({ date: { $gt: date } }, { ...opts, sort: { date: 1 } }),
+  ]);
+  return { prev: prev?.date, next: next?.date };
+}
+
 app.get("/healthz", (c) => c.text("ok"));
 
 app.get("/", async (c) => {
@@ -30,6 +40,8 @@ app.get("/", async (c) => {
     renderDigest(latest, {
       note,
       greeting: greeting(now, cfg.digestTimezone),
+      timeZone: cfg.digestTimezone,
+      edition: await neighbours(latest.date),
       meta: { ...site, path: "/", current: "today" },
     }),
   );
@@ -76,8 +88,22 @@ app.get("/digest/:date", async (c) => {
     return c.html(renderMessage("Not found", "Dates look like 2026-10-23."), 404);
   }
   const digest = await digests.findOne({ date });
-  if (!digest) return c.html(renderMessage("Not found", `No digest for ${date}.`, site), 404);
-  return c.html(renderDigest(digest, { meta: { ...site, path: `/digest/${date}` } }));
+  if (!digest) {
+    return c.html(
+      renderMessage("No edition that day", `There's no digest for ${date}. Past editions are in the archive.`, site, {
+        href: "/archive",
+        label: "Browse the archive",
+      }),
+      404,
+    );
+  }
+  return c.html(
+    renderDigest(digest, {
+      timeZone: cfg.digestTimezone,
+      edition: await neighbours(date),
+      meta: { ...site, path: `/digest/${date}` },
+    }),
+  );
 });
 
 app.notFound((c) => c.html(renderMessage("Not found", "That page doesn't exist.", site), 404));

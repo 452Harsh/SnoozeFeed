@@ -45,6 +45,11 @@ export interface DigestPick {
   url: string;
   username: string;
   gist: string;
+  /** Optional display details (absent on digests saved before they were added). */
+  imageUrl?: string;
+  altText?: string;
+  postedAt?: Date;
+  type?: PostType;
 }
 
 export interface DigestCategory {

@@ -1,9 +1,9 @@
-// Server-rendered HTML for the digest pages: "Morning Paper" design.
-// No framework, no build step. Small inline JS only enhances (theme toggle,
-// active chip); every page works without it. All dynamic text goes through esc(),
-// all hrefs through safeUrl().
+// Server-rendered HTML for the digest pages: an editorial "morning paper" design.
+// No framework, no build step. Small inline JS only enhances (theme toggle, active
+// topic tab, hiding images that fail to load); every page works without it.
+// All dynamic text goes through esc(), all hrefs and image sources through safeUrl().
 import { CATEGORIES } from "../config.js";
-import type { DigestDoc, DigestPick } from "../types.js";
+import type { DigestDoc, DigestPick, PostType, SkipReason } from "../types.js";
 
 const ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 export const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ESCAPES[c]!);
@@ -27,8 +27,20 @@ export function formatDate(date: string): string {
 const dateParts = (date: string) => {
   const d = new Date(`${date}T12:00:00Z`);
   const f = (o: Intl.DateTimeFormatOptions) => d.toLocaleDateString("en-US", { ...o, timeZone: "UTC" });
-  return { weekday: f({ weekday: "short" }), day: f({ day: "numeric" }), month: f({ month: "long" }), year: f({ year: "numeric" }) };
+  return {
+    weekday: f({ weekday: "short" }),
+    day: f({ day: "numeric" }),
+    month: f({ month: "long" }),
+    year: f({ year: "numeric" }),
+    /** "Saturday, October 24" */
+    long: f({ weekday: "long", month: "long", day: "numeric" }),
+    /** "Sat, Oct 24" */
+    short: f({ weekday: "short", month: "short", day: "numeric" }),
+  };
 };
+
+/** Drops replacement characters and half-cut emoji (lone surrogates) left by truncated captions. */
+const clean = (s: string): string => s.replace(/\uFFFD|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "").trim();
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -37,7 +49,7 @@ export function statsLine(d: Pick<DigestDoc, "stats">): string {
   return `${plural(pages, "page")} · ${plural(posts, "post")} · ~${minutesSaved} min of scrolling saved`;
 }
 
-/** Hero number: minutes when there's at least one, otherwise seconds (never "~0 min"). */
+/** Saved-time figure: minutes when there's at least one, otherwise seconds (never "~0 min"). */
 function savedAmount(stats: DigestDoc["stats"]): { value: number; unit: string } {
   return stats.minutesSaved >= 1
     ? { value: stats.minutesSaved, unit: "min" }
@@ -50,113 +62,108 @@ export function greeting(now: Date, timeZone: string): string {
   return hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 }
 
+/** "Sat 7:40 AM" in the digest's timezone, or nothing for older digests without a timestamp. */
+function postedTime(at: Date | string | undefined, timeZone: string): { iso: string; label: string } | undefined {
+  if (!at) return undefined;
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return undefined;
+  const label = d.toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone });
+  return { iso: d.toISOString(), label };
+}
+
+const TYPE_LABELS: Partial<Record<PostType, string>> = { reel: "Reel", video: "Video", carousel: "Carousel" };
+
+const SKIP_LABELS: Record<SkipReason, string> = { ad: "Ad", repost: "Repost", giveaway: "Giveaway" };
+
+/** Section headlines: fixed editorial copy per category, never generated. */
+const SECTION_TITLES: Record<string, string> = {
+  news: "Across the world today",
+  tech: "From the world of tech",
+  food: "On the table",
+  fitness: "Moving well",
+  finance: "Money matters",
+  entertainment: "On screen and stage",
+  memes: "The lighter side",
+  other: "Everything else",
+};
+
+/** Scraper errors can be technical; visitors get a short, plain explanation. */
+function friendlyError(error: string): string {
+  if (/private/i.test(error)) return "Private account. SlothScroll only reads public pages.";
+  if (/not found|unavailable|doesn'?t exist/i.test(error)) return "Page not found or no longer available.";
+  if (/login|log in|blocked|challenge|rate.?limit|429/i.test(error)) return "Instagram asked for a login, so this page was left alone today.";
+  if (/no posts/i.test(error)) return "No posts were visible on the page.";
+  return "Couldn't be loaded today.";
+}
+
 /* ---------- Icons (inline SVG, decorative: aria-hidden) ---------- */
 
 const svg = (body: string, size = 20) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
 
-const CATEGORY_ICONS: Record<string, string> = {
-  news: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/>',
-  tech: '<rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/>',
-  food: '<path d="M3 11h18a9 9 0 0 1-18 0Z"/><path d="M8 7.5c0-1.5 1-2 1-3.5M12 7.5c0-1.5 1-2 1-3.5M16 7.5c0-1.5 1-2 1-3.5"/>',
-  fitness: '<path d="M6 7v10M18 7v10M3 10v4M21 10v4M6 12h12"/>',
-  finance: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
-  entertainment: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5Z"/>',
-  memes: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/>',
-  other: '<circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/>',
-};
-
-const ARROW = svg('<path d="M7 17 17 7M9 7h8v8"/>', 18);
+const ARROW_OUT = svg('<path d="M7 17 17 7M9 7h8v8"/>', 16);
+const ARROW_LEFT = svg('<path d="M19 12H5M11 6l-6 6 6 6"/>', 16);
+const ARROW_RIGHT = svg('<path d="M5 12h14M13 6l6 6-6 6"/>', 16);
 const CHEVRON = svg('<path d="m9 6 6 6-6 6"/>', 16);
 const SUN = svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>', 18);
 const MOON = svg('<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>', 18);
+const RSS_ICON = svg('<path d="M5 11a8 8 0 0 1 8 8M5 5a14 14 0 0 1 14 14"/><circle cx="6" cy="18" r="1.2" fill="currentColor"/>', 16);
 
 /** Sleepy sloth mark. Fixed colours so it reads on both themes. */
 function slothMark(size: number): string {
   return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-<circle cx="16" cy="16" r="15" fill="#B9906B"/>
-<ellipse cx="16" cy="18" rx="11.5" ry="9.5" fill="#F4E6D2"/>
-<ellipse cx="10.6" cy="16.4" rx="4" ry="2.7" fill="#5A3E2B" transform="rotate(-18 10.6 16.4)"/>
-<ellipse cx="21.4" cy="16.4" rx="4" ry="2.7" fill="#5A3E2B" transform="rotate(18 21.4 16.4)"/>
-<path d="M9.2 16.6q1.5 1 3 0M19.8 16.6q1.5 1 3 0" stroke="#F4E6D2" stroke-width="1.1" fill="none" stroke-linecap="round"/>
-<ellipse cx="16" cy="20.3" rx="1.7" ry="1.15" fill="#3A281B"/>
-<path d="M13.6 23.2q2.4 1.6 4.8 0" stroke="#3A281B" stroke-width="1.15" fill="none" stroke-linecap="round"/>
+<circle cx="16" cy="16" r="15" fill="#A88A6A"/>
+<ellipse cx="16" cy="18" rx="11.5" ry="9.5" fill="#F3E9DA"/>
+<ellipse cx="10.6" cy="16.4" rx="4" ry="2.7" fill="#5A4433" transform="rotate(-18 10.6 16.4)"/>
+<ellipse cx="21.4" cy="16.4" rx="4" ry="2.7" fill="#5A4433" transform="rotate(18 21.4 16.4)"/>
+<path d="M9.2 16.6q1.5 1 3 0M19.8 16.6q1.5 1 3 0" stroke="#F3E9DA" stroke-width="1.1" fill="none" stroke-linecap="round"/>
+<ellipse cx="16" cy="20.3" rx="1.7" ry="1.15" fill="#3A2C20"/>
+<path d="M13.6 23.2q2.4 1.6 4.8 0" stroke="#3A2C20" stroke-width="1.15" fill="none" stroke-linecap="round"/>
 </svg>`;
 }
 
 const FAVICON = `data:image/svg+xml,${encodeURIComponent(slothMark(32).replace(/\s*aria-hidden="true" focusable="false"/, ' xmlns="http://www.w3.org/2000/svg"'))}`;
 
-/** Category → CSS class slug from the fixed list (anything unknown is "other"). */
+/** Category → id slug from the fixed list (anything unknown is "other"). */
 const catSlug = (category: string): string => {
   const known = CATEGORIES.find((c) => c.toLowerCase() === category.toLowerCase());
   return (known ?? "Other").toLowerCase();
 };
 
-const catIcon = (category: string) => svg(CATEGORY_ICONS[catSlug(category)] ?? CATEGORY_ICONS.other!);
-
-/** Typographic avatar: first letter, tint picked from the username so it's stable. */
+/** Typographic avatar: the account's first letter. Instagram profile photos are never hotlinked. */
 function avatar(username: string): string {
   const letter = (username.match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase();
-  let h = 0;
-  for (const ch of username) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  const slug = CATEGORIES[h % CATEGORIES.length]!.toLowerCase();
-  return `<span class="avatar c-${slug}" aria-hidden="true">${esc(letter)}</span>`;
+  return `<span class="avatar" aria-hidden="true">${esc(letter)}</span>`;
 }
 
 /* ---------- Styles ---------- */
+
+const DARK_TOKENS = `
+  color-scheme: dark;
+  --bg: #161915; --surface: #1D211C; --surface-2: #252A23; --ink: #ECE9E0; --ink-2: #D2D2C7; --muted: #A1A897;
+  --rule: #2D332B; --rule-strong: #3E463B; --accent: #A6BF9E; --accent-ink: #141812; --sage: #222B20; --sage-ink: #C6D8BF;
+  --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 10px 28px rgb(0 0 0 / .28);`;
 
 const CSS = `
 :root {
   color-scheme: light;
   interpolate-size: allow-keywords;
-  --bg: #FAF6EE; --surface: #FFFDF8; --surface-2: #F3EDE2; --ink: #1F1B16; --muted: #6B6257;
-  --rule: #E6DDCF; --accent: #B04E26; --accent-ink: #FFFFFF; --accent-soft: #F6E3D8;
-  --shadow-1: 0 1px 0 rgb(31 27 22 / .04), 0 1px 3px rgb(31 27 22 / .06);
-  --shadow-2: 0 2px 6px rgb(31 27 22 / .06), 0 10px 28px rgb(31 27 22 / .07);
-  --news-tint: #E6EDF7; --news-edge: #3E6CA8;  --tech-tint: #ECE8F8; --tech-edge: #6A55B5;
-  --food-tint: #F8EADB; --food-edge: #B06A2A;  --fitness-tint: #E2F1E6; --fitness-edge: #3A8150;
-  --finance-tint: #EEF1DD; --finance-edge: #6F7A2A; --entertainment-tint: #F8E3EB; --entertainment-edge: #B04A74;
-  --memes-tint: #FBF1CF; --memes-edge: #A67F12; --other-tint: #ECE8E2; --other-edge: #7A7064;
+  --bg: #F8F6F0; --surface: #FFFFFF; --surface-2: #F1EEE6; --ink: #242820; --ink-2: #3B4036; --muted: #656D61;
+  --rule: #E5E1D8; --rule-strong: #CDC8BB; --accent: #526B4D; --accent-ink: #FFFFFF; --sage: #EBF0E5; --sage-ink: #3E5438;
+  --shadow: 0 1px 2px rgb(36 40 32 / .04), 0 10px 28px rgb(36 40 32 / .07);
 
   --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-12: 48px; --s-16: 64px;
-  --r-sm: 6px; --r-md: 10px; --r-lg: 16px; --r-pill: 999px;
-  --t-xs: .78rem; --t-sm: .875rem; --t-base: 1rem; --t-md: 1.125rem; --t-lg: 1.375rem; --t-xl: 1.75rem;
-  --t-hero: clamp(4.25rem, 22vw, 7rem);
+  --r-sm: 4px; --r-md: 8px; --r-lg: 12px; --r-pill: 999px;
+  --t-xs: .75rem; --t-sm: .875rem; --t-base: 1rem; --t-md: 1.125rem; --t-lg: 1.3125rem;
+  --t-xl: clamp(1.5rem, 1.25rem + 1.1vw, 2rem);
+  --t-2xl: clamp(2.75rem, 1.9rem + 4.2vw, 4.5rem);
   --serif: "Newsreader", Georgia, "Times New Roman", serif;
   --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --ease: cubic-bezier(.2, .7, .2, 1);
-  --column: 720px;
+  --container: 1080px;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --bg: #15120E; --surface: #1E1A15; --surface-2: #28221B; --ink: #EDE6DA; --muted: #A89E90;
-    --rule: #342E26; --accent: #E8895C; --accent-ink: #1A0F08; --accent-soft: #3A2418;
-    --shadow-1: 0 1px 0 rgb(0 0 0 / .3); --shadow-2: 0 2px 8px rgb(0 0 0 / .35), 0 12px 32px rgb(0 0 0 / .3);
-    --news-tint: #1C2633; --news-edge: #8DB2E3; --tech-tint: #262236; --tech-edge: #B3A4EC;
-    --food-tint: #33261A; --food-edge: #E3A86E; --fitness-tint: #1A2C20; --fitness-edge: #84C79A;
-    --finance-tint: #272B19; --finance-edge: #BFC97A; --entertainment-tint: #33202A; --entertainment-edge: #E895B7;
-    --memes-tint: #332C16; --memes-edge: #E5C25E; --other-tint: #2A2622; --other-edge: #B8AFA3;
-  }
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #15120E; --surface: #1E1A15; --surface-2: #28221B; --ink: #EDE6DA; --muted: #A89E90;
-  --rule: #342E26; --accent: #E8895C; --accent-ink: #1A0F08; --accent-soft: #3A2418;
-  --shadow-1: 0 1px 0 rgb(0 0 0 / .3); --shadow-2: 0 2px 8px rgb(0 0 0 / .35), 0 12px 32px rgb(0 0 0 / .3);
-  --news-tint: #1C2633; --news-edge: #8DB2E3; --tech-tint: #262236; --tech-edge: #B3A4EC;
-  --food-tint: #33261A; --food-edge: #E3A86E; --fitness-tint: #1A2C20; --fitness-edge: #84C79A;
-  --finance-tint: #272B19; --finance-edge: #BFC97A; --entertainment-tint: #33202A; --entertainment-edge: #E895B7;
-  --memes-tint: #332C16; --memes-edge: #E5C25E; --other-tint: #2A2622; --other-edge: #B8AFA3;
-}
-.c-news { --tint: var(--news-tint); --edge: var(--news-edge); }
-.c-tech { --tint: var(--tech-tint); --edge: var(--tech-edge); }
-.c-food { --tint: var(--food-tint); --edge: var(--food-edge); }
-.c-fitness { --tint: var(--fitness-tint); --edge: var(--fitness-edge); }
-.c-finance { --tint: var(--finance-tint); --edge: var(--finance-edge); }
-.c-entertainment { --tint: var(--entertainment-tint); --edge: var(--entertainment-edge); }
-.c-memes { --tint: var(--memes-tint); --edge: var(--memes-edge); }
-.c-other { --tint: var(--other-tint); --edge: var(--other-edge); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {${DARK_TOKENS}} }
+:root[data-theme="dark"] {${DARK_TOKENS}}
 
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
@@ -164,168 +171,239 @@ body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 400 var(--t-base)/1.6 var(--sans); font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  transition: background-color .2s, color .2s;
 }
 a { color: inherit; }
+img { max-width: 100%; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--r-sm); }
-.wrap { max-width: var(--column); margin: 0 auto; padding: 0 var(--s-4); }
+.wrap { max-width: var(--container); margin: 0 auto; padding-inline: var(--s-4); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.skip { position: absolute; left: var(--s-4); top: -60px; background: var(--accent); color: var(--accent-ink); padding: var(--s-2) var(--s-4); border-radius: var(--r-md); z-index: 20; text-decoration: none; font-weight: 600; }
+.skip { position: absolute; left: var(--s-4); top: -60px; background: var(--accent); color: var(--accent-ink); padding: var(--s-2) var(--s-4); border-radius: var(--r-md); z-index: 30; text-decoration: none; font-weight: 600; }
 .skip:focus { top: var(--s-2); }
 .num { font-variant-numeric: tabular-nums lining-nums; }
+.eyebrow { margin: 0; font: 600 var(--t-xs)/1.4 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 
 /* Masthead */
 .masthead { border-bottom: 1px solid var(--rule); }
-.masthead .wrap { display: flex; align-items: center; justify-content: space-between; min-height: 60px; gap: var(--s-3); }
-.brand { display: inline-flex; align-items: center; gap: var(--s-2); text-decoration: none; font: 600 1.25rem/1 var(--serif); letter-spacing: -.01em; padding: var(--s-2) 0; }
-.brand em { font-style: italic; font-weight: 400; color: var(--accent); }
-.nav-actions { display: flex; align-items: center; gap: var(--s-1); }
-.nav-link { font-size: var(--t-sm); font-weight: 500; color: var(--muted); text-decoration: none; padding: var(--s-3) var(--s-3); border-radius: var(--r-md); transition: color .15s, background .15s; }
-.nav-link:hover { color: var(--ink); background: var(--surface-2); }
-.nav-link[aria-current="page"] { color: var(--ink); }
-.icon-btn { display: inline-grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted); cursor: pointer; transition: color .15s, background .15s; }
+.masthead .wrap { display: flex; align-items: center; gap: var(--s-4); min-height: 64px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; flex: none; text-decoration: none; color: var(--ink); font: 600 1.3125rem/1 var(--serif); letter-spacing: -.015em; padding: var(--s-2) 0; }
+.brand i { font-style: italic; font-weight: 400; color: var(--accent); }
+.edition { display: none; padding-left: var(--s-4); border-left: 1px solid var(--rule); font: 500 var(--t-xs)/1.2 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.nav { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--s-3); border-radius: var(--r-md); text-decoration: none; font: 500 var(--t-sm)/1 var(--sans); color: var(--muted); transition: color .15s, background-color .15s; }
+.nav a:hover { color: var(--ink); background: var(--surface-2); }
+.nav a[aria-current="page"] { color: var(--ink); text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 8px; }
+.icon-btn { display: inline-grid; place-items: center; width: 44px; height: 44px; margin-left: var(--s-1); border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted); cursor: pointer; transition: color .15s, background-color .15s; }
 .icon-btn:hover { color: var(--ink); background: var(--surface-2); }
 .icon-btn .moon { display: none; }
 .icon-btn[data-mode="light"] .sun { display: none; }
 .icon-btn[data-mode="light"] .moon { display: block; }
 
-/* Hero */
-.hero { padding: var(--s-10) 0 var(--s-8); }
-.kicker { font: 600 var(--t-xs)/1.4 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0; }
-.kicker b { color: var(--accent); font-weight: 600; }
-.hero h1 { margin: var(--s-6) 0 0; font-family: var(--serif); font-weight: 500; line-height: .9; letter-spacing: -.035em; }
-.hero .big { display: block; font-size: var(--t-hero); }
-.hero .big small { font-size: .42em; letter-spacing: -.02em; margin-left: .08em; }
-.hero .big .tilde { font-size: .62em; color: var(--muted); margin-right: .02em; vertical-align: .14em; }
-.hero .sub { display: block; margin-top: var(--s-2); font: italic 400 var(--t-lg)/1.25 var(--serif); letter-spacing: 0; color: var(--ink); }
-.hero .meta { margin: var(--s-4) 0 0; color: var(--muted); font-size: var(--t-sm); }
-.hero .meta span + span::before { content: "·"; margin: 0 var(--s-2); }
-.notice { margin: var(--s-6) 0 0; padding: var(--s-3) var(--s-4); border-radius: var(--r-md); background: var(--surface-2); color: var(--muted); font-size: var(--t-sm); }
-.banner { display: flex; gap: var(--s-3); align-items: center; margin: var(--s-6) 0 0; padding: var(--s-3) var(--s-4); border-radius: var(--r-md); background: var(--accent-soft); color: var(--ink); font-size: var(--t-sm); line-height: 1.45; }
-.banner b { font-family: var(--serif); font-style: italic; font-weight: 400; font-size: var(--t-base); }
+/* Morning introduction */
+.intro { display: grid; gap: var(--s-6); padding-block: var(--s-10) var(--s-8); }
+.greeting { margin: var(--s-3) 0 0; font: 400 var(--t-2xl)/1 var(--serif); letter-spacing: -.035em; font-variation-settings: "opsz" 72; text-wrap: balance; }
+.tagline { margin: var(--s-3) 0 0; font: italic 400 var(--t-xl)/1.2 var(--serif); letter-spacing: -.01em; color: var(--accent); }
+.lede { margin: var(--s-4) 0 0; max-width: 52ch; font-size: var(--t-md); line-height: 1.55; color: var(--ink-2); text-wrap: pretty; }
+.saved { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: var(--s-4); padding-top: var(--s-5); border-top: 1px solid var(--rule-strong); }
+.saved-n { grid-row: span 2; font: 400 3.25rem/1 var(--serif); letter-spacing: -.04em; font-variation-settings: "opsz" 72; }
+.saved-n .tilde { color: var(--muted); font-size: .6em; vertical-align: .18em; margin-right: 1px; }
+.saved-n small { font-size: .38em; letter-spacing: 0; margin-left: 4px; }
+.saved-l { align-self: end; font: 600 var(--t-xs)/1.4 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.saved-note { align-self: start; font: italic 400 var(--t-md)/1.3 var(--serif); color: var(--ink-2); }
+.notice, .banner { display: flex; align-items: center; gap: var(--s-3); margin: 0 0 var(--s-6); padding: var(--s-3) var(--s-4); border-radius: var(--r-md); font-size: var(--t-sm); line-height: 1.45; }
+.notice { background: var(--surface-2); color: var(--ink-2); }
+.banner { background: var(--sage); color: var(--sage-ink); }
+.banner svg { flex: none; }
+.banner b { font-weight: 600; }
 
-/* At a glance */
-.glance { position: sticky; top: 0; z-index: 10; margin: 0 calc(var(--s-4) * -1); padding: var(--s-3) var(--s-4); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: saturate(1.4) blur(8px); -webkit-backdrop-filter: saturate(1.4) blur(8px); border-bottom: 1px solid var(--rule); border-top: 1px solid var(--rule); }
-.glance h2 { margin: 0 0 var(--s-2); }
-.chips { display: flex; gap: var(--s-2); list-style: none; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
-.chips::-webkit-scrollbar { display: none; }
-.chip { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 40px; padding: 0 var(--s-4) 0 var(--s-3); border-radius: var(--r-pill); background: var(--tint); color: var(--ink); text-decoration: none; font-size: var(--t-sm); font-weight: 500; white-space: nowrap; scroll-snap-align: start; border: 1px solid transparent; transition: border-color .15s, transform .15s var(--ease); }
-.chip svg { color: var(--edge); width: 16px; height: 16px; }
-.chip .n { color: var(--muted); font-weight: 600; }
-.chip:hover { border-color: var(--edge); }
-.chip:active { transform: scale(.97); }
-.chip[aria-current="true"] { border-color: var(--edge); box-shadow: inset 0 0 0 1px var(--edge); }
+/* Topic navigation */
+.topics { position: sticky; top: 0; z-index: 10; background: var(--bg); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); transition: background-color .2s; }
+.topics .wrap { display: flex; align-items: center; gap: var(--s-4); }
+.topics-label { display: none; flex: none; }
+.tabs { display: flex; gap: var(--s-1); list-style: none; margin: 0 calc(var(--s-4) * -1); padding: 0 var(--s-4); overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; flex: 1; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 52px; padding: 0 var(--s-3); scroll-snap-align: start; white-space: nowrap; text-decoration: none; font: 500 var(--t-sm)/1 var(--sans); color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color .15s, border-color .15s; }
+.tab .n { font-size: var(--t-xs); font-weight: 600; padding: 3px 7px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--muted); }
+.tab:hover { color: var(--ink); }
+.tab[aria-current="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab[aria-current="true"] .n { background: var(--sage); color: var(--sage-ink); }
 
-/* Category cards */
-.stories { padding: var(--s-6) 0 var(--s-4); display: grid; gap: var(--s-6); }
-.cat { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-lg); box-shadow: var(--shadow-1); padding: var(--s-6) var(--s-5) var(--s-5); scroll-margin-top: 96px; overflow: hidden; }
-.cat::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--edge); }
-.cat-head { display: flex; align-items: center; gap: var(--s-3); }
-.cat-icon { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: var(--r-md); background: var(--tint); color: var(--edge); flex: none; }
-.cat h2 { margin: 0; font: 600 var(--t-lg)/1.2 var(--serif); letter-spacing: -.01em; }
-.cat .count { margin-left: auto; font-size: var(--t-sm); color: var(--muted); }
-.summary { margin: var(--s-4) 0 0; font: 400 var(--t-md)/1.65 var(--serif); max-width: 68ch; text-wrap: pretty; }
-.label { margin: var(--s-6) 0 var(--s-2); font: 600 var(--t-xs)/1.4 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
-.picks { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
-.picks li { border-bottom: 1px solid var(--rule); }
-.pick { display: grid; grid-template-columns: auto 1fr auto; gap: var(--s-3); align-items: start; min-height: 44px; padding: var(--s-3) var(--s-2); margin: 0 calc(var(--s-2) * -1); text-decoration: none; border-radius: var(--r-md); transition: background .15s, transform .15s var(--ease); }
-.pick:hover { background: var(--surface-2); }
-.pick:active { transform: scale(.995); }
-.pick:hover .go { color: var(--accent); transform: translate(2px, -2px); }
-.avatar { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--tint); color: var(--ink); font: 600 .95rem/1 var(--serif); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--edge) 35%, transparent); }
-.who { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; font-size: var(--t-sm); font-weight: 600; }
-.gist { display: block; margin-top: 2px; font-size: var(--t-base); line-height: 1.5; color: var(--ink); text-wrap: pretty; }
-.go { color: var(--muted); margin-top: 2px; transition: color .15s, transform .15s var(--ease); }
-.badge { font-size: var(--t-xs); font-weight: 600; padding: 2px var(--s-2); border-radius: var(--r-pill); background: var(--accent-soft); color: var(--ink); }
+/* Topic sections */
+.topic { padding: var(--s-10) 0; border-bottom: 1px solid var(--rule); scroll-margin-top: 52px; }
+.topic-grid { display: grid; gap: var(--s-6); }
+.topic-head { margin: 0; }
+.topic-head .kicker { display: block; font: 600 var(--t-xs)/1.4 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+.topic-head .kicker .count { color: var(--muted); font-weight: 500; letter-spacing: .08em; }
+.topic-head .title { display: block; margin-top: var(--s-2); font: 400 var(--t-xl)/1.15 var(--serif); letter-spacing: -.02em; color: var(--ink); text-wrap: balance; }
+.deck { margin: var(--s-4) 0 0; max-width: 60ch; font: 400 var(--t-md)/1.65 var(--serif); color: var(--ink-2); text-wrap: pretty; }
+.label { display: flex; align-items: center; gap: var(--s-3); margin: 0 0 var(--s-4); font: 600 var(--t-xs)/1.4 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.label::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+.label .by { font-weight: 400; letter-spacing: .02em; text-transform: none; }
 
-details summary { list-style: none; cursor: pointer; }
-details summary::-webkit-details-marker { display: none; }
-details summary svg { transition: transform .2s var(--ease); }
+/* Stories */
+.story { position: relative; }
+.stretch { text-decoration: none; color: inherit; }
+.stretch::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.stretch:focus-visible { outline: none; }
+.story:has(.stretch:focus-visible) { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-md); }
+.story:hover .headline a { text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.byline { display: flex; align-items: center; flex-wrap: wrap; gap: 4px var(--s-2); margin: 0; font: 400 var(--t-sm)/1.3 var(--sans); color: var(--muted); }
+.byline .handle { color: var(--ink); font-weight: 600; }
+.byline .dot::before { content: "·"; }
+.avatar { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--sage); color: var(--sage-ink); font: 600 .8125rem/1 var(--serif); flex: none; }
+.headline { margin: var(--s-3) 0 0; font: 400 var(--t-md)/1.4 var(--serif); letter-spacing: -.005em; text-wrap: pretty; }
+.open { display: inline-flex; align-items: center; gap: 6px; margin-top: var(--s-4); font: 600 var(--t-sm)/1 var(--sans); color: var(--accent); }
+.open svg { transition: transform .2s var(--ease); }
+.story:hover .open svg { transform: translate(2px, -2px); }
+.covered { display: inline-block; margin-top: var(--s-3); padding: 3px var(--s-2); border-radius: var(--r-pill); background: var(--sage); color: var(--sage-ink); font: 600 var(--t-xs)/1.4 var(--sans); }
+.media { margin: 0; overflow: hidden; border-radius: var(--r-md); background: var(--surface-2); aspect-ratio: 16 / 10; }
+.media img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+.lead { display: grid; gap: var(--s-5); padding: var(--s-5); background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-lg); transition: border-color .2s, box-shadow .2s; }
+.lead:hover { border-color: var(--rule-strong); box-shadow: var(--shadow); }
+.lead .headline { font-size: clamp(1.375rem, 1.15rem + .9vw, 1.75rem); line-height: 1.22; letter-spacing: -.015em; font-variation-settings: "opsz" 36; }
+
+.supporting { display: grid; margin-top: var(--s-2); }
+.support { padding: var(--s-5) 0; border-bottom: 1px solid var(--rule); }
+.support:has(.thumb) { display: grid; grid-template-columns: minmax(0, 1fr) 76px; gap: var(--s-4); align-items: start; }
+.support .thumb { aspect-ratio: 1; }
+.support .headline { font-size: var(--t-lg); line-height: 1.3; }
+.support .open { margin-top: var(--s-3); }
+
+.more { margin-top: var(--s-6); }
+.more > summary, .quiet > summary { list-style: none; cursor: pointer; }
+.more > summary::-webkit-details-marker, .quiet > summary::-webkit-details-marker { display: none; }
+details > summary svg { flex: none; transition: transform .2s var(--ease); }
 details[open] > summary svg { transform: rotate(90deg); }
 details::details-content { block-size: 0; overflow: clip; transition: block-size .25s var(--ease), content-visibility .25s allow-discrete; }
 details[open]::details-content { block-size: auto; }
-.all { margin-top: var(--s-3); }
-.all > summary { display: inline-flex; align-items: center; gap: var(--s-1); min-height: 44px; padding: 0 var(--s-2); margin-left: calc(var(--s-2) * -1); border-radius: var(--r-md); font-size: var(--t-sm); font-weight: 600; color: var(--accent); }
-.all > summary:hover { background: var(--surface-2); }
-.rows { list-style: none; margin: var(--s-1) 0 0; padding: 0; }
-.rows a { display: block; padding: var(--s-2) var(--s-2); margin: 0 calc(var(--s-2) * -1); min-height: 44px; border-radius: var(--r-sm); text-decoration: none; font-size: var(--t-sm); line-height: 1.5; color: var(--ink); transition: background .15s; }
-.rows a:hover { background: var(--surface-2); }
-.rows b { font-weight: 600; }
+details.more > summary { display: inline-flex; align-items: center; gap: var(--s-1); min-height: 44px; padding: 0 var(--s-2); margin-left: calc(var(--s-2) * -1); border-radius: var(--r-md); font: 600 var(--t-sm)/1 var(--sans); color: var(--accent); transition: background-color .15s; }
+details.more > summary:hover { background: var(--surface-2); }
+.rows { list-style: none; margin: var(--s-2) 0 0; padding: 0; }
+.rows li { border-top: 1px solid var(--rule); }
+.rows li:last-child { border-bottom: 1px solid var(--rule); }
+.rows a { display: block; min-height: 44px; padding: var(--s-3) 0; text-decoration: none; }
+.rows .meta { display: flex; flex-wrap: wrap; gap: 4px var(--s-2); font: 400 var(--t-xs)/1.4 var(--sans); color: var(--muted); }
+.rows .meta b { color: var(--ink); font-weight: 600; font-size: var(--t-sm); }
+.rows .g { display: block; margin-top: 2px; font: 400 var(--t-base)/1.5 var(--serif); text-wrap: pretty; }
+.rows a:hover .g { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
 
-/* Quiet bottom sections */
-.quiet { margin: var(--s-4) 0 0; border-top: 1px solid var(--rule); }
-.quiet details { border-bottom: 1px solid var(--rule); }
-.quiet summary { display: flex; align-items: center; gap: var(--s-2); min-height: 52px; font-size: var(--t-sm); color: var(--muted); padding: 0 var(--s-1); }
-.quiet summary:hover { color: var(--ink); }
-.quiet summary .n { font-weight: 600; color: var(--ink); }
-.quiet ul { list-style: none; margin: 0 0 var(--s-4); padding: 0 var(--s-1); font-size: var(--t-sm); color: var(--muted); }
-.quiet li { padding: var(--s-2) 0; }
-.quiet li a { color: var(--ink); }
-.tag { font-size: var(--t-xs); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-right: var(--s-1); }
+/* Skipped & unavailable */
+.quiet-wrap { padding-top: var(--s-10); }
+.quiet { border: 1px solid var(--rule); border-radius: var(--r-lg); background: var(--surface); }
+.quiet > summary { display: flex; align-items: center; gap: var(--s-2); min-height: 56px; padding: 0 var(--s-5); border-radius: var(--r-lg); font: 500 var(--t-sm)/1.3 var(--sans); color: var(--ink-2); }
+.quiet > summary:hover { color: var(--ink); }
+.quiet > summary .n { margin-left: auto; padding: 3px var(--s-2); border-radius: var(--r-pill); background: var(--surface-2); color: var(--muted); font-size: var(--t-xs); font-weight: 600; }
+.quiet-body { display: grid; gap: var(--s-6); padding: var(--s-2) var(--s-5) var(--s-5); }
+.quiet h3 { margin: 0; font: 600 var(--t-sm)/1.4 var(--sans); }
+.quiet h3 span { display: block; font-weight: 400; color: var(--muted); }
+.quiet ul { list-style: none; margin: var(--s-2) 0 0; padding: 0; font-size: var(--t-sm); color: var(--ink-2); }
+.quiet li { display: flex; gap: var(--s-2); align-items: baseline; padding: var(--s-2) 0; border-top: 1px solid var(--rule); }
+.quiet li a { color: var(--ink); font-weight: 600; text-decoration: none; }
+.quiet li a:hover { text-decoration: underline; }
+.reason { flex: none; padding: 1px 7px; border: 1px solid var(--rule-strong); border-radius: var(--r-pill); font: 600 .6875rem/1.5 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+/* Edition navigation */
+.editions { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: var(--s-3); margin-top: var(--s-10); padding: var(--s-4) 0; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule); }
+.editions a { text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; gap: var(--s-2); border-radius: var(--r-md); }
+.editions .ed { flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; }
+.editions .ed .eyebrow { display: inline-flex; align-items: center; gap: 6px; }
+.editions .ed b { font: 400 var(--t-md)/1.2 var(--serif); }
+.editions .ed:hover b { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+.editions .next { justify-self: end; align-items: flex-end; text-align: right; }
+.editions .today { justify-self: center; padding: 0 var(--s-4); border: 1px solid var(--rule-strong); border-radius: var(--r-pill); font: 600 var(--t-sm)/1 var(--sans); transition: border-color .15s, background-color .15s; }
+.editions .today:hover { border-color: var(--accent); background: var(--surface); }
 
 /* Empty / message states */
-.empty { text-align: center; padding: var(--s-12) var(--s-4); }
-.empty svg { display: block; margin: 0 auto var(--s-4); }
-.empty h2, .empty h1 { margin: 0; font: 500 var(--t-xl)/1.2 var(--serif); letter-spacing: -.01em; }
-.empty p { margin: var(--s-2) auto 0; color: var(--muted); max-width: 40ch; }
-.button { display: inline-flex; align-items: center; min-height: 44px; margin-top: var(--s-6); padding: 0 var(--s-5); border-radius: var(--r-pill); background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 600; font-size: var(--t-sm); transition: transform .15s var(--ease), box-shadow .15s; }
-.button:hover { box-shadow: var(--shadow-2); }
+.empty { text-align: center; padding-block: var(--s-16); }
+.empty svg { display: block; margin: 0 auto var(--s-5); }
+.empty h1, .empty h2 { margin: 0; font: 400 var(--t-xl)/1.2 var(--serif); letter-spacing: -.015em; }
+.empty p { margin: var(--s-3) auto 0; max-width: 42ch; color: var(--muted); }
+.button { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 44px; margin-top: var(--s-6); padding: 0 var(--s-5); border-radius: var(--r-pill); background: var(--accent); color: var(--accent-ink); text-decoration: none; font: 600 var(--t-sm)/1 var(--sans); transition: box-shadow .15s, transform .15s var(--ease); }
+.button:hover { box-shadow: var(--shadow); }
 .button:active { transform: scale(.98); }
+code { font-size: .9em; padding: 1px 5px; border-radius: var(--r-sm); background: var(--surface-2); }
 
 /* Archive */
-.page-head { padding: var(--s-10) 0 var(--s-6); }
-.page-head h1 { margin: var(--s-2) 0 0; font: 500 clamp(2.25rem, 10vw, 3.25rem)/1 var(--serif); letter-spacing: -.03em; }
-.page-head p { margin: var(--s-3) 0 0; color: var(--muted); }
+.page-head { padding-block: var(--s-12) 0; }
+.page-head h1 { margin: var(--s-3) 0 0; font: 400 var(--t-2xl)/1 var(--serif); letter-spacing: -.035em; font-variation-settings: "opsz" 72; }
+.page-head p.lede { margin-top: var(--s-4); }
+.archive-grid { display: grid; gap: var(--s-10); padding-top: var(--s-8); }
 .month { margin: 0 0 var(--s-8); }
-.month h2 { margin: 0 0 var(--s-2); padding-bottom: var(--s-2); border-bottom: 1px solid var(--rule); font: 600 var(--t-xs)/1.4 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.month h2 { margin: 0; padding-bottom: var(--s-3); border-bottom: 1px solid var(--rule-strong); }
 .days { list-style: none; margin: 0; padding: 0; }
 .days li { border-bottom: 1px solid var(--rule); }
-.day { display: grid; grid-template-columns: 56px 1fr auto; gap: var(--s-4); align-items: center; padding: var(--s-4) var(--s-2); margin: 0 calc(var(--s-2) * -1); min-height: 64px; text-decoration: none; border-radius: var(--r-md); transition: background .15s; }
-.day:hover { background: var(--surface-2); }
+.day { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: var(--s-4); align-items: center; min-height: 72px; padding: var(--s-4) 0; text-decoration: none; }
 .day .date { text-align: center; line-height: 1; }
-.day .date b { display: block; font: 500 1.9rem/1 var(--serif); letter-spacing: -.02em; }
-.day .date span { font-size: var(--t-xs); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
-.day .what { min-width: 0; font-size: var(--t-sm); color: var(--muted); }
-.day .what .t { display: block; color: var(--ink); font-weight: 500; font-size: var(--t-base); margin-bottom: 2px; }
-.dots { display: inline-flex; gap: 6px; vertical-align: middle; margin-right: var(--s-2); }
-.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--edge); }
-.day .saved { text-align: right; font: 500 var(--t-lg)/1 var(--serif); white-space: nowrap; }
-.day .saved small { display: block; font: 400 var(--t-xs)/1.4 var(--sans); color: var(--muted); margin-top: 2px; }
-.demo-tag { font-size: var(--t-xs); font-weight: 600; color: var(--accent); margin-left: var(--s-1); }
-.feeds { margin: var(--s-4) 0 var(--s-8); padding: var(--s-5); border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--rule); scroll-margin-top: var(--s-6); }
-.feeds h2 { margin: 0; font: 600 var(--t-md)/1.3 var(--serif); }
-.feeds p { margin: var(--s-1) 0 var(--s-3); font-size: var(--t-sm); color: var(--muted); }
-.feeds ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s-2); }
-.feeds a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--s-4); border-radius: var(--r-pill); border: 1px solid var(--rule); text-decoration: none; font-size: var(--t-sm); font-weight: 500; transition: border-color .15s, background .15s; }
-.feeds a:hover { border-color: var(--accent); background: var(--surface-2); }
+.day .date b { display: block; font: 400 2rem/1 var(--serif); letter-spacing: -.03em; }
+.day .date span { display: block; margin-top: 4px; font: 600 .6875rem/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.day .what { min-width: 0; }
+.day .t { display: block; font: 400 var(--t-md)/1.35 var(--serif); color: var(--ink); }
+.day:hover .t { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+.day .s { display: block; margin-top: 2px; font-size: var(--t-sm); color: var(--muted); }
+.day .saved-mini { text-align: right; font: 400 var(--t-lg)/1 var(--serif); white-space: nowrap; }
+.day .saved-mini small { display: block; margin-top: 4px; font: 600 .6875rem/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.demo-tag { display: inline-block; margin-left: var(--s-2); padding: 1px 7px; border-radius: var(--r-pill); background: var(--sage); color: var(--sage-ink); font: 600 .6875rem/1.5 var(--sans); letter-spacing: .04em; vertical-align: 2px; }
+.feeds { align-self: start; padding: var(--s-6); border: 1px solid var(--rule); border-radius: var(--r-lg); background: var(--surface); scroll-margin-top: var(--s-6); }
+.feeds h2 { display: flex; align-items: center; gap: var(--s-2); margin: 0; font: 400 var(--t-lg)/1.3 var(--serif); }
+.feeds h2 svg { color: var(--accent); }
+.feeds p { margin: var(--s-2) 0 var(--s-4); font-size: var(--t-sm); color: var(--muted); }
+.feeds ul { list-style: none; margin: 0; padding: 0; }
+.feeds li { border-top: 1px solid var(--rule); }
+.feeds li a { display: flex; flex-direction: column; justify-content: center; min-height: 52px; padding: var(--s-2) 0; text-decoration: none; }
+.feeds li b { font-size: var(--t-sm); font-weight: 600; }
+.feeds li span { font-size: var(--t-xs); color: var(--muted); word-break: break-all; }
+.feeds li a:hover b { color: var(--accent); }
 
 /* Footer */
-.footer { margin-top: var(--s-12); border-top: 1px solid var(--rule); padding: var(--s-8) 0 var(--s-12); text-align: center; }
-.footer nav { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s-1) var(--s-2); }
-.footer nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--s-3); text-decoration: none; font-size: var(--t-sm); font-weight: 500; color: var(--muted); border-radius: var(--r-md); }
+.footer { margin-top: var(--s-16); border-top: 1px solid var(--rule); padding: var(--s-8) 0 var(--s-12); }
+.footer .wrap { display: grid; gap: var(--s-4); }
+.footer nav { display: flex; flex-wrap: wrap; gap: 0 var(--s-1); margin-left: calc(var(--s-3) * -1); }
+.footer nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--s-3); border-radius: var(--r-md); text-decoration: none; font: 500 var(--t-sm)/1 var(--sans); color: var(--muted); }
 .footer nav a:hover { color: var(--ink); background: var(--surface-2); }
-.footer p { margin: var(--s-4) 0 0; display: inline-flex; align-items: center; gap: var(--s-2); font: italic 400 var(--t-base)/1 var(--serif); color: var(--muted); }
+.footer p { display: inline-flex; align-items: center; gap: var(--s-2); margin: 0; font: italic 400 var(--t-base)/1 var(--serif); color: var(--muted); }
 
 /* Motion */
-@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-.reveal { animation: rise .55s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms); }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.reveal { animation: rise .5s var(--ease) both; animation-delay: calc(var(--i, 0) * 60ms); }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
-@media (min-width: 720px) {
-  .wrap { padding: 0 var(--s-6); }
-  .glance { position: static; margin: 0; padding: var(--s-4) 0; background: none; backdrop-filter: none; -webkit-backdrop-filter: none; border-top: 0; }
-  .cat { padding: var(--s-8) var(--s-8) var(--s-6); scroll-margin-top: var(--s-6); }
-  .hero { padding-top: var(--s-16); }
-  .chips { flex-wrap: wrap; overflow: visible; }
+@media (min-width: 640px) {
+  .edition { display: inline; }
+  .lead .media { aspect-ratio: 4 / 5; }
+  .lead:has(.media) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: center; gap: var(--s-6); }
+  .supporting { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--s-6); }
+  .supporting .support:only-child { grid-column: 1 / -1; }
+}
+@media (min-width: 768px) {
+  .wrap { padding-inline: var(--s-8); }
+  .tabs { margin: 0; padding: 0; }
+  .intro { grid-template-columns: minmax(0, 1fr) auto; align-items: end; column-gap: var(--s-12); padding-block: var(--s-16) var(--s-10); }
+  .saved { display: block; padding: 0 0 var(--s-1) var(--s-8); border-top: 0; border-left: 1px solid var(--rule-strong); min-width: 220px; }
+  .saved-n { display: block; font-size: 4rem; }
+  .saved-l { display: block; margin-top: var(--s-2); }
+  .saved-note { display: block; margin-top: var(--s-1); }
+  .lead { padding: var(--s-6); }
+  .topic { padding: var(--s-12) 0; }
+  .footer .wrap { grid-template-columns: 1fr auto; align-items: center; }
+}
+@media (min-width: 1024px) {
+  .topics-label { display: block; }
+  .topic-grid { grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: var(--s-12); }
+  .topic-intro { position: sticky; top: 76px; align-self: start; }
+  .deck { font-size: 1.1875rem; }
+  .archive-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 4fr); gap: var(--s-12); }
+  .feeds { position: sticky; top: var(--s-6); }
 }
 `;
 
 /* ---------- Layout ---------- */
 
 export interface PageMeta {
-  /** Public base URL (no trailing slash) for og:url. */
+  /** Public base URL (no trailing slash) for og:url and the canonical link. */
   publicUrl?: string;
   path?: string;
   current?: "today" | "archive";
@@ -333,7 +411,7 @@ export interface PageMeta {
 
 const THEME_BOOT = `(function(){try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}})();`;
 
-// Progressive enhancement only: theme toggle (remembered) and the active chip while scrolling.
+// Progressive enhancement only: theme toggle (remembered) and the active topic tab while scrolling.
 const ENHANCE = `(function(){
 var root=document.documentElement,b=document.getElementById("theme-toggle");
 if(b){b.hidden=false;
@@ -341,18 +419,21 @@ var cur=function(){return root.dataset.theme||(matchMedia("(prefers-color-scheme
 var sync=function(){var c=cur();b.dataset.mode=c;b.setAttribute("aria-label",c==="dark"?"Switch to light theme":"Switch to dark theme")};
 b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";root.dataset.theme=n;try{localStorage.setItem("theme",n)}catch(e){}sync()});
 sync();}
-var chips=document.querySelectorAll(".chip[href^='#']");
-if(chips.length&&"IntersectionObserver" in window){
-var map={};chips.forEach(function(c){map[c.getAttribute("href").slice(1)]=c});
-var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){chips.forEach(function(c){c.removeAttribute("aria-current")});var c=map[e.target.id];if(c){c.setAttribute("aria-current","true");if(c.scrollIntoView&&matchMedia("(max-width: 719px)").matches)c.scrollIntoView({block:"nearest",inline:"nearest"})}}})},{rootMargin:"-45% 0px -50% 0px"});
-document.querySelectorAll(".cat[id]").forEach(function(s){io.observe(s)});}
+var tabs=document.querySelectorAll(".tab[href^='#']");
+if(tabs.length&&"IntersectionObserver" in window){
+var map={};tabs.forEach(function(t){map[t.getAttribute("href").slice(1)]=t});
+var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){tabs.forEach(function(t){t.removeAttribute("aria-current")});var t=map[e.target.id];if(t){t.setAttribute("aria-current","true");var l=t.parentNode.parentNode;if(l.scrollWidth>l.clientWidth)l.scrollTo({left:t.parentNode.offsetLeft-16,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"})}}})},{rootMargin:"-40% 0px -55% 0px"});
+document.querySelectorAll(".topic[id]").forEach(function(s){io.observe(s)});}
 })();`;
+
+// Instagram image URLs expire; a failed image removes its frame so no broken icon is ever shown.
+const IMG_FALLBACK = `this.closest('figure').remove()`;
 
 function layout(opts: { title: string; description: string; meta?: PageMeta; body: string }): string {
   const { title, description, meta = {}, body } = opts;
-  const ogUrl = meta.publicUrl ? `${meta.publicUrl}${meta.path ?? "/"}` : undefined;
+  const pageUrl = meta.publicUrl ? `${meta.publicUrl}${meta.path ?? "/"}` : undefined;
   const nav = (href: string, label: string, key: PageMeta["current"]) =>
-    `<a class="nav-link" href="${href}"${meta.current === key ? ' aria-current="page"' : ""}>${label}</a>`;
+    `<a href="${href}"${meta.current === key ? ' aria-current="page"' : ""}>${label}</a>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -361,18 +442,19 @@ function layout(opts: { title: string; description: string; meta?: PageMeta; bod
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(description)}">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#FAF6EE" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#15120E" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F8F6F0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161915" media="(prefers-color-scheme: dark)">
+${pageUrl ? `<link rel="canonical" href="${safeUrl(pageUrl)}">` : ""}
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="SlothScroll">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description)}">
-${ogUrl ? `<meta property="og:url" content="${safeUrl(ogUrl)}">` : ""}
+${pageUrl ? `<meta property="og:url" content="${safeUrl(pageUrl)}">` : ""}
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="${FAVICON}" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..500&display=swap">
 <script>${THEME_BOOT}</script>
 <style>${CSS}</style>
 </head>
@@ -380,22 +462,24 @@ ${ogUrl ? `<meta property="og:url" content="${safeUrl(ogUrl)}">` : ""}
 <a class="skip" href="#main">Skip to content</a>
 <header class="masthead">
   <div class="wrap">
-    <a class="brand" href="/" aria-label="SlothScroll, today's digest">${slothMark(30)}<span>Sloth<em>Scroll</em></span></a>
-    <nav class="nav-actions" aria-label="Main">
+    <a class="brand" href="/" aria-label="SlothScroll, today's digest">${slothMark(28)}<span>Sloth<i>Scroll</i></span></a>
+    <span class="edition">Daily edition</span>
+    <nav class="nav" aria-label="Main">
       ${nav("/", "Today", "today")}
       ${nav("/archive", "Archive", "archive")}
       <button class="icon-btn" id="theme-toggle" type="button" aria-label="Toggle theme" hidden><span class="sun">${SUN}</span><span class="moon">${MOON}</span></button>
     </nav>
   </div>
 </header>
-<main id="main" class="wrap">
+<main id="main">
 ${body}
 </main>
 <footer class="footer">
   <div class="wrap">
     <nav aria-label="Footer">
+      <a href="/">Today</a>
       <a href="/archive">Archive</a>
-      <a href="/archive#feeds">RSS</a>
+      <a href="/archive#feeds">RSS feeds</a>
       <a href="${safeUrl(MANAGE_PAGES_URL)}" rel="noopener noreferrer">Manage pages</a>
     </nav>
     <p>${slothMark(18)} Made slowly with Gemma</p>
@@ -406,106 +490,191 @@ ${body}
 </html>`;
 }
 
-/* ---------- Digest page ---------- */
+/* ---------- Story components ---------- */
 
-const pickRow = (p: DigestPick & { coveredBy?: number }): string =>
-  `<li><a class="pick" href="${safeUrl(p.url)}" rel="noopener noreferrer">${avatar(p.username)}<span><span class="who">@${esc(p.username)}${
-    p.coveredBy && p.coveredBy > 1 ? ` <span class="badge">covered by ${p.coveredBy} pages</span>` : ""
-  }</span><span class="gist">${esc(p.gist)}</span></span><span class="go">${ARROW}<span class="sr-only"> (opens Instagram)</span></span></a></li>`;
+interface StoryCtx {
+  timeZone: string;
+}
+
+type Story = DigestPick & { coveredBy?: number };
+
+function byline(p: Story, ctx: StoryCtx): string {
+  const time = postedTime(p.postedAt, ctx.timeZone);
+  const kind = p.type ? TYPE_LABELS[p.type] : undefined;
+  return `<p class="byline">${avatar(p.username)}<span class="handle">@${esc(p.username)}</span>${
+    time ? `<span class="dot" aria-hidden="true"></span><time datetime="${esc(time.iso)}">${esc(time.label)}</time>` : ""
+  }${kind ? `<span class="dot" aria-hidden="true"></span><span>${esc(kind)}</span>` : ""}</p>`;
+}
+
+function media(p: Story, cls: string): string {
+  const src = p.imageUrl ? safeUrl(p.imageUrl) : "#";
+  if (src === "#") return "";
+  const alt = p.altText?.trim() || `Image from @${p.username}'s post`;
+  return `<figure class="${cls}"><img src="${src}" alt="${esc(alt)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="${IMG_FALLBACK}"></figure>`;
+}
+
+const storyLink = (p: Story) =>
+  `<a class="stretch" href="${safeUrl(p.url)}" rel="noopener noreferrer">${esc(clean(p.gist))}<span class="sr-only"> (open the original post on Instagram)</span></a>`;
+
+const covered = (p: Story) =>
+  p.coveredBy && p.coveredBy > 1 ? `<span class="covered">Covered by ${p.coveredBy} pages</span>` : "";
+
+function leadStory(p: Story, ctx: StoryCtx): string {
+  return `<article class="story lead">${media(p, "media")}<div>${byline(p, ctx)}<h3 class="headline">${storyLink(p)}</h3>${covered(p)}<div><span class="open" aria-hidden="true">Open original post ${ARROW_OUT}</span></div></div></article>`;
+}
+
+function supportStory(p: Story, ctx: StoryCtx): string {
+  return `<article class="story support"><div>${byline(p, ctx)}<h3 class="headline">${storyLink(p)}</h3>${covered(p)}<div><span class="open" aria-hidden="true">Open post ${ARROW_OUT}</span></div></div>${media(p, "media thumb")}</article>`;
+}
+
+function rowStory(p: Story, ctx: StoryCtx): string {
+  const time = postedTime(p.postedAt, ctx.timeZone);
+  const kind = p.type ? TYPE_LABELS[p.type] : undefined;
+  return `<li><a href="${safeUrl(p.url)}" rel="noopener noreferrer"><span class="meta"><b>@${esc(p.username)}</b>${
+    time ? `<time datetime="${esc(time.iso)}">${esc(time.label)}</time>` : ""
+  }${kind ? `<span>${esc(kind)}</span>` : ""}</span><span class="g">${esc(clean(p.gist))}</span><span class="sr-only"> (opens Instagram)</span></a></li>`;
+}
+
+function topicSection(c: DigestDoc["categories"][number], i: number, ctx: StoryCtx): string {
+  const slug = catSlug(c.category);
+  // Gemma's picks lead; if it picked nothing, the first post leads instead.
+  const featured: Story[] = c.picks.length ? c.picks : c.posts.slice(0, 1);
+  const featuredUrls = new Set(featured.map((p) => p.url));
+  const rest = c.posts.filter((p) => !featuredUrls.has(p.url));
+  const [lead, ...supporting] = featured;
+
+  const more = !rest.length
+    ? ""
+    : rest.length <= 3
+      ? `<div class="more"><p class="label">Also posted</p><ul class="rows">${rest.map((p) => rowStory(p, ctx)).join("")}</ul></div>`
+      : `<details class="more"><summary>${CHEVRON}${plural(rest.length, "more post")} in ${esc(c.category)}</summary><ul class="rows">${rest
+          .map((p) => rowStory(p, ctx))
+          .join("")}</ul></details>`;
+
+  return `<section class="topic reveal" id="topic-${slug}" style="--i:${Math.min(i + 2, 6)}" aria-labelledby="t-${slug}">
+  <div class="wrap topic-grid">
+    <div class="topic-intro">
+      <h2 class="topic-head" id="t-${slug}"><span class="kicker">${esc(c.category)} <span class="count num">· ${plural(c.posts.length, "post")}</span></span><span class="sr-only">: </span><span class="title">${esc(SECTION_TITLES[slug] ?? SECTION_TITLES.other!)}</span></h2>
+      <p class="deck">${esc(clean(c.summary))}</p>
+    </div>
+    <div class="topic-stories">
+      ${c.picks.length ? `<p class="label">Worth your time <span class="by">· picked by Gemma</span></p>` : ""}
+      ${lead ? leadStory(lead, ctx) : ""}
+      ${supporting.length ? `<div class="supporting">${supporting.map((p) => supportStory(p, ctx)).join("")}</div>` : ""}
+      ${more}
+    </div>
+  </div>
+</section>`;
+}
+
+/* ---------- Digest page ---------- */
 
 export interface DigestOptions {
   note?: string;
-  /** Shown as the hero kicker greeting, e.g. "Good morning". Omitted for past digests. */
+  /** "Good morning" etc. Present only on today's page; past editions are shown as archived. */
   greeting?: string;
+  /** Timezone for post times (DIGEST_TIMEZONE). */
+  timeZone?: string;
+  /** Neighbouring editions for previous/next navigation. */
+  edition?: { prev?: string; next?: string };
   meta?: PageMeta;
+}
+
+function editionNav(edition: DigestOptions["edition"], isToday: boolean): string {
+  const { prev, next } = edition ?? {};
+  if (!prev && !next && isToday) return "";
+  const link = (date: string, dir: "prev" | "next") => {
+    const p = dateParts(date);
+    const label = dir === "prev" ? `${ARROW_LEFT} Previous` : `Next ${ARROW_RIGHT}`;
+    return `<a class="ed ${dir}" rel="${dir}" href="/digest/${esc(date)}"><span class="eyebrow">${label}</span><b>${esc(p.short)}</b></a>`;
+  };
+  return `<nav class="wrap" aria-label="Other editions"><div class="editions">
+  ${prev ? link(prev, "prev") : "<span></span>"}
+  ${isToday ? "<span></span>" : `<a class="today" href="/">Today's digest</a>`}
+  ${next ? link(next, "next") : "<span></span>"}
+</div></nav>`;
 }
 
 export function renderDigest(digest: DigestDoc, opts: DigestOptions = {}): string {
   // "Other" is a catch-all, so it never leads the page.
   const d = { ...digest, categories: [...digest.categories].sort((a, b) => Number(a.category === "Other") - Number(b.category === "Other")) };
+  const ctx: StoryCtx = { timeZone: opts.timeZone ?? "UTC" };
+  const isToday = Boolean(opts.greeting);
   const saved = savedAmount(d.stats);
   const parts = dateParts(d.date);
-  const kicker = opts.greeting
-    ? `<b>${esc(opts.greeting)}</b> · ${esc(parts.weekday)} ${esc(parts.day)} ${esc(parts.month)} ${esc(parts.year)}`
-    : `From the archive · ${esc(formatDate(d.date))}`;
 
-  const hero = `<section class="hero reveal" aria-labelledby="hero-title">
-  <p class="kicker">${kicker}</p>
-  <h1 id="hero-title"><span class="big num"><span class="tilde" aria-hidden="true">~</span><span class="sr-only">about </span>${saved.value}<small>${esc(saved.unit)}</small></span><span class="sub">of scrolling saved</span></h1>
-  <p class="meta num"><span>${plural(d.stats.pages, "page")}</span><span>${plural(d.stats.posts, "post")}</span>${
-    d.categories.length ? `<span>${plural(d.categories.length, "topic")}</span>` : ""
-  }</p>
-  ${opts.note ? `<p class="notice">${esc(opts.note)}</p>` : ""}
+  const lede = d.stats.posts
+    ? `${plural(d.stats.posts, "post")} reviewed across ${plural(d.stats.pages, "page")}. ${
+        d.categories.length ? "Here are the stories worth your time." : "Nothing in them was worth your time."
+      }`
+    : `Nothing new from your ${plural(d.stats.pages, "page")} in the last 24 hours.`;
+
+  const intro = `<section class="wrap intro reveal" aria-labelledby="intro-title">
+  <div>
+    <p class="eyebrow">${isToday ? esc(`${parts.long}, ${parts.year}`) : "Archived edition"}</p>
+    <h1 class="greeting" id="intro-title">${isToday ? `${esc(opts.greeting!)}.` : esc(parts.long)}</h1>
+    <p class="tagline">${isToday ? "Your world, caught up." : `As it was that morning, ${esc(parts.year)}.`}</p>
+    <p class="lede num">${esc(lede)}</p>
+  </div>
   ${
-    d.demo
-      ? `<aside class="banner" aria-label="Demo edition">${slothMark(28)}<span><b>Demo edition.</b> These pages and posts are made up, so you can see SlothScroll at work without touching Instagram.</span></aside>`
+    d.stats.posts
+      ? `<aside class="saved" aria-label="Time saved"><span class="saved-n num"><span class="tilde" aria-hidden="true">~</span><span class="sr-only">About </span>${saved.value}<small>${esc(saved.unit)}</small></span><span class="saved-l">of scrolling saved</span><span class="saved-note">${isToday ? "Your morning, reclaimed." : "That morning, reclaimed."}</span></aside>`
       : ""
   }
 </section>`;
 
-  const glance = d.categories.length
-    ? `<nav class="glance" aria-labelledby="glance-title">
-  <h2 class="kicker" id="glance-title">Today at a glance</h2>
-  <ul class="chips">${d.categories
-    .map((c) => {
-      const slug = catSlug(c.category);
-      return `<li><a class="chip c-${slug}" href="#cat-${slug}">${catIcon(c.category)}${esc(c.category)} <span class="n num">${c.posts.length}</span></a></li>`;
-    })
+  const notices = [
+    opts.note ? `<p class="notice" role="status">${esc(opts.note)}</p>` : "",
+    d.demo
+      ? `<aside class="banner" aria-label="Demo edition">${slothMark(26)}<span><b>Demo edition.</b> These pages and posts are made up, so you can see SlothScroll at work without touching Instagram.</span></aside>`
+      : "",
+  ].join("");
+
+  const topicNav = d.categories.length
+    ? `<nav class="topics" aria-label="Topics in this edition"><div class="wrap">
+  <span class="eyebrow topics-label">In this edition</span>
+  <ul class="tabs">${d.categories
+    .map((c) => `<li><a class="tab" href="#topic-${catSlug(c.category)}">${esc(c.category)} <span class="n num">${c.posts.length}</span></a></li>`)
     .join("")}</ul>
-</nav>`
+</div></nav>`
     : "";
 
-  const cards = d.categories
-    .map((c, i) => {
-      const slug = catSlug(c.category);
-      const more = c.posts.length > c.picks.length;
-      return `<section class="cat c-${slug} reveal" id="cat-${slug}" style="--i:${i + 2}" aria-labelledby="h-${slug}">
-  <header class="cat-head"><span class="cat-icon">${catIcon(c.category)}</span><h2 id="h-${slug}">${esc(c.category)}</h2><span class="count num">${plural(c.posts.length, "post")}</span></header>
-  <p class="summary">${esc(c.summary)}</p>
-  ${c.picks.length ? `<h3 class="label">Worth opening</h3><ul class="picks">${c.picks.map(pickRow).join("")}</ul>` : ""}
-  ${
-    more
-      ? `<details class="all"><summary>${CHEVRON}All ${c.posts.length} posts</summary><ul class="rows">${c.posts
-          .map((p) => `<li><a href="${safeUrl(p.url)}" rel="noopener noreferrer"><b>@${esc(p.username)}</b> · ${esc(p.gist)}</a></li>`)
-          .join("")}</ul></details>`
-      : ""
-  }
-</section>`;
-    })
-    .join("\n");
+  const sections = d.categories.length
+    ? d.categories.map((c, i) => topicSection(c, i, ctx)).join("\n")
+    : `<section class="wrap empty reveal" style="--i:2">${slothMark(72)}<h2>Nothing new, enjoy the quiet</h2><p>None of your pages posted anything worth reading in the last 24 hours. The sloth approves.</p></section>`;
 
-  const empty = d.categories.length
-    ? ""
-    : `<section class="empty reveal" style="--i:2">${slothMark(72)}<h2>Nothing new, enjoy the quiet</h2><p>None of your pages posted in the last 24 hours. The sloth approves.</p></section>`;
-
-  const quiet =
-    d.skipped.length || d.failed.length
-      ? `<section class="quiet" aria-label="Skipped and failed">
-  ${
+  const quietCount = d.skipped.length + d.failed.length;
+  const quiet = quietCount
+    ? `<section class="wrap quiet-wrap" aria-label="Skipped and unavailable">
+  <details class="quiet"><summary>${CHEVRON}<span>Skipped &amp; unavailable</span><span class="n num">${quietCount}</span></summary>
+  <div class="quiet-body">${
     d.skipped.length
-      ? `<details><summary>${CHEVRON}<span><span class="n num">${plural(d.skipped.length, "post")}</span> skipped: ads, giveaways, reposts</span></summary><ul>${d.skipped
-          .map((s) => `<li><span class="tag">${esc(s.reason)}</span><a href="${safeUrl(s.url)}" rel="noopener noreferrer">@${esc(s.username)}</a>: ${esc(s.gist)}</li>`)
-          .join("")}</ul></details>`
+      ? `<div><h3>Skipped on purpose <span>Ads, reposts and giveaways Gemma filtered out.</span></h3><ul>${d.skipped
+          .map(
+            (s) =>
+              `<li><span class="reason">${esc(SKIP_LABELS[s.reason] ?? s.reason)}</span><span><a href="${safeUrl(s.url)}" rel="noopener noreferrer">@${esc(s.username)}</a> ${esc(clean(s.gist))}</span></li>`,
+          )
+          .join("")}</ul></div>`
       : ""
-  }
-  ${
+  }${
     d.failed.length
-      ? `<details><summary>${CHEVRON}<span><span class="n num">${plural(d.failed.length, "page")}</span> couldn't be read today</span></summary><ul>${d.failed
-          .map((f) => `<li><b>@${esc(f.username)}</b>: ${esc(f.error)}</li>`)
-          .join("")}</ul></details>`
+      ? `<div><h3>Pages we couldn't read <span>These pages will be tried again in the next edition.</span></h3><ul>${d.failed
+          .map((f) => `<li><span><b>@${esc(f.username)}</b>: ${esc(friendlyError(f.error))}</span></li>`)
+          .join("")}</ul></div>`
       : ""
-  }
+  }</div>
+  </details>
 </section>`
-      : "";
+    : "";
 
   const topics = d.categories.map((c) => c.category).join(", ");
   return layout({
-    title: opts.greeting ? `SlothScroll · ${formatDate(d.date)}` : `SlothScroll · ${d.date}`,
+    title: isToday ? `SlothScroll · ${formatDate(d.date)}` : `${formatDate(d.date)} · SlothScroll`,
     description: `~${saved.value} ${saved.unit} of scrolling saved: ${plural(d.stats.posts, "post")} from ${plural(d.stats.pages, "Instagram page")}${
       topics ? ` (${topics})` : ""
     }, summarized by Gemma.`,
     meta: opts.meta,
-    body: `${hero}\n${glance}\n<div class="stories">${cards}${empty}</div>\n${quiet}`,
+    body: `${intro}\n${notices ? `<div class="wrap">${notices}</div>` : ""}\n${topicNav}\n${sections}\n${quiet}\n${editionNav(opts.edition, isToday)}`,
   });
 }
 
@@ -524,47 +693,56 @@ export function renderArchive(digests: ArchiveEntry[], feeds: string[] = [], met
   const list = digests.length
     ? [...months]
         .map(
-          ([label, days]) => `<section class="month"><h2>${esc(label)}</h2><ul class="days">${days
+          ([label, days]) => `<section class="month" aria-labelledby="m-${esc(label.replace(/\s+/g, "-"))}"><h2 class="eyebrow" id="m-${esc(label.replace(/\s+/g, "-"))}">${esc(label)}</h2><ul class="days">${days
             .map((d) => {
               const p = dateParts(d.date);
               const cats = d.categories ?? [];
               const saved = savedAmount(d.stats);
               return `<li><a class="day" href="/digest/${esc(d.date)}">
-  <span class="date"><b class="num">${esc(p.day)}</b><span>${esc(p.weekday)}</span></span>
-  <span class="what"><span class="t">${plural(d.stats.posts, "post")} from ${plural(d.stats.pages, "page")}${d.demo ? `<span class="demo-tag">demo</span>` : ""}</span>${
-    cats.length
-      ? `<span class="dots" aria-hidden="true">${cats.map((c) => `<span class="dot c-${catSlug(c.category)}"></span>`).join("")}</span>${esc(cats.map((c) => c.category).join(" · "))}`
-      : "Nothing new"
-  }</span>
-  <span class="saved num">~${saved.value} ${esc(saved.unit)}<small>saved</small></span>
+  <span class="date" aria-hidden="true"><b class="num">${esc(p.day)}</b><span>${esc(p.weekday)}</span></span>
+  <span class="what"><span class="t">${esc(p.long)}${d.demo ? `<span class="demo-tag">Demo</span>` : ""}</span><span class="s num">${
+    cats.length ? `${esc(cats.map((c) => c.category).join(" · "))} — ` : "A quiet day — "
+  }${plural(d.stats.posts, "post")} from ${plural(d.stats.pages, "page")}</span></span>
+  <span class="saved-mini num">${d.stats.posts ? `~${saved.value} ${esc(saved.unit)}<small>saved</small>` : ""}</span>
 </a></li>`;
             })
             .join("")}</ul></section>`,
         )
         .join("")
-    : `<section class="empty">${slothMark(72)}<h2>No digests yet</h2><p>The first one appears after the daily run, or run <code>pnpm demo</code>.</p></section>`;
+    : `<section class="empty">${slothMark(72)}<h2>No editions yet</h2><p>The first one appears after the daily run. To preview one now, run <code>pnpm demo</code>.</p></section>`;
 
   const feedList = feeds.length
-    ? `<section class="feeds" id="feeds" aria-labelledby="feeds-title"><h2 id="feeds-title">RSS feeds</h2><p>Follow any page in your feed reader, one gist per post.</p><ul>${feeds
-        .map((u) => `<li><a href="/feeds/${esc(u)}.xml">@${esc(u)}</a></li>`)
-        .join("")}</ul></section>`
+    ? `<aside class="feeds" id="feeds" aria-labelledby="feeds-title"><h2 id="feeds-title">${RSS_ICON}Follow by RSS</h2><p>Prefer a feed reader? Copy a link into Feedly, NetNewsWire, Inoreader or any RSS app. Each item is one post with its Gemma gist.</p><ul>${feeds
+        .map(
+          (u) =>
+            `<li><a href="/feeds/${esc(u)}.xml"><b>@${esc(u)}</b><span>/feeds/${esc(u)}.xml</span></a></li>`,
+        )
+        .join("")}</ul></aside>`
     : "";
 
   return layout({
     title: "Archive · SlothScroll",
-    description: "Past SlothScroll digests: what your Instagram pages posted each day, and how much scrolling it saved.",
+    description: "Past SlothScroll editions: what your Instagram pages posted each day, and how much scrolling it saved.",
     meta: { ...meta, path: "/archive", current: "archive" },
-    body: `<header class="page-head reveal"><p class="kicker">The slow archive</p><h1>Every morning, kept</h1><p>${plural(digests.length, "digest")} so far.</p></header>${list}${feedList}`,
+    body: `<header class="wrap page-head reveal"><p class="eyebrow">Archive</p><h1>The daily editions.</h1><p class="lede">Every past digest, kept as it was. ${
+      digests.length ? `${plural(digests.length, "edition")} so far.` : ""
+    }</p></header>
+<div class="wrap archive-grid"><div>${list}</div>${feedList}</div>`,
   });
 }
 
 /* ---------- Messages (404, errors, no digest yet) ---------- */
 
-export function renderMessage(title: string, message: string, meta: PageMeta = {}): string {
+export function renderMessage(
+  title: string,
+  message: string,
+  meta: PageMeta = {},
+  action: { href: string; label: string } = { href: "/", label: "Back to today" },
+): string {
   return layout({
     title: `${title} · SlothScroll`,
     description: message,
     meta,
-    body: `<section class="empty reveal">${slothMark(80)}<h1>${esc(title)}</h1><p>${esc(message)}</p><a class="button" href="/">Back to today</a></section>`,
+    body: `<section class="wrap empty reveal" role="status">${slothMark(80)}<h1>${esc(title)}</h1><p>${esc(message)}</p><a class="button" href="${esc(action.href)}">${esc(action.label)}</a></section>`,
   });
 }
