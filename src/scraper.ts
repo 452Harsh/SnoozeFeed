@@ -14,6 +14,7 @@ const WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Profile grids show up to 3 pinned posts first, which can be older than newer posts. */
 const MAX_PINNED = 3;
 const MAX_POSTS_PER_PAGE = 12;
+const SESSION_TIMEOUT_S = 30 * 60;
 const NAV_TIMEOUT_MS = 30_000;
 
 export class InstagramBlockedError extends AbortRunError {
@@ -40,6 +41,8 @@ export async function openScraper(cfg: Config, log: (msg: string) => void = cons
   const browser: StagehandBrowser = await browserbase.launch({
     apiKey,
     projectId,
+    // Browserbase ends sessions after 5 minutes by default; a full run (every page, every post) takes longer.
+    api_timeout: SESSION_TIMEOUT_S,
     ...(contextId ? { browserSettings: { context: { id: contextId, persist: true } } } : {}),
   });
   log(`browserbase session ${browser.sessionId} (replay: https://www.browserbase.com/sessions/${browser.sessionId})`);
