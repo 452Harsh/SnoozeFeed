@@ -38,9 +38,12 @@ export function isWeakCaption(caption: string): boolean {
 export interface GistResult {
   gist: string;
   skip?: SkipReason;
+  /** Topic of this post; undefined when Gemma's answer wasn't one of CATEGORIES. */
+  category?: Category;
 }
 
-export async function gistPost(ai: GemmaClient, post: ScrapedPost): Promise<GistResult> {
+/** pageCategory is the account's usual topic: a hint for Gemma, and the fallback. */
+export async function gistPost(ai: GemmaClient, post: ScrapedPost, pageCategory?: Category): Promise<GistResult> {
   const weak = isWeakCaption(post.caption);
   const text = `You write a one-line gist of an Instagram post for a morning digest.
 
@@ -54,8 +57,11 @@ Rules:
 - "gist": one plain sentence, max 20 words, no emojis or hashtags, no "this post".
 - "skip": "ad" for paid promotions or discount codes, "giveaway" for contests/giveaways,
   "repost" for reshared content from another account, otherwise null.
+- "category": the topic of THIS post, exactly one of: ${CATEGORIES.join(", ")}.
+  Judge the post itself, not the account${pageCategory ? ` (it usually posts ${pageCategory}, but a single post can be about something else)` : ""}.
+  Use News only for general/current-affairs stories that fit no more specific topic.
 
-Reply with JSON only: {"gist": "...", "skip": null}`;
+Reply with JSON only: {"gist": "...", "skip": null, "category": "..."}`;
 
   // Attach the image only for real http(s) URLs; fixtures use placeholder URLs.
   const prompt: string | ContentPart[] =
@@ -66,11 +72,12 @@ Reply with JSON only: {"gist": "...", "skip": null}`;
         ]
       : text;
 
-  const reply = await ai.json<{ gist?: string; skip?: string | null }>(prompt);
+  const reply = await ai.json<{ gist?: string; skip?: string | null; category?: string }>(prompt);
   const gist = reply.gist?.trim();
   if (!gist) throw new Error("Gemma reply had no gist");
   const skip = SKIP_REASONS.find((r) => r === reply.skip);
-  return skip ? { gist, skip } : { gist };
+  const category = CATEGORIES.find((c) => c.toLowerCase() === reply.category?.trim().toLowerCase());
+  return { gist, ...(skip ? { skip } : {}), ...(category ? { category } : {}) };
 }
 
 export interface SummaryInput {

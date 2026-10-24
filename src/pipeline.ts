@@ -44,9 +44,17 @@ export class AbortRunError extends Error {
   }
 }
 
-const toPick = (p: PostDoc): DigestPick => ({ url: p.url, username: p.username, gist: p.gist });
+const toPick = (p: PostDoc): DigestPick => ({
+  url: p.url,
+  username: p.username,
+  gist: p.gist,
+  ...(p.imageUrl ? { imageUrl: p.imageUrl } : {}),
+  ...(p.altText ? { altText: p.altText } : {}),
+  postedAt: p.postedAt,
+  type: p.type,
+});
 
-export async function runPipeline(opts: RunOptions): Promise<DigestDoc> {
+export async function runPipeline(opts: RunOptions): Promise<{ digest: DigestDoc; saved: boolean }> {
   const { cfg, db, ai, source } = opts;
   const now = opts.now ?? new Date();
   const log = opts.log ?? console.log;
@@ -81,20 +89,22 @@ export async function runPipeline(opts: RunOptions): Promise<DigestDoc> {
 
     for (const post of recent) {
       const stored = existing.get(post.url);
-      // Reuse a stored gist unless it was a caption fallback; a page's category may have changed since.
-      if (stored && !stored.aiError) {
-        kept.push({ ...stored, category });
+      // Reuse a stored gist unless it was a caption fallback or predates per-post categories.
+      if (stored && !stored.aiError && stored.categorySource === "post") {
+        kept.push(stored);
         continue;
       }
       // 4. Gemma gist per new post; on failure fall back to the caption.
       const { createdAt = now, digestDate = date } = stored ?? {};
-      const doc: PostDoc = { ...post, category, gist: "", source, digestDate, createdAt };
+      const doc: PostDoc = { ...post, category, categorySource: "page", gist: "", source, digestDate, createdAt };
       try {
-        const g = await gistPost(ai, post);
+        const g = await gistPost(ai, post, category);
         doc.gist = g.gist;
         if (g.skip) doc.skip = g.skip;
+        if (g.category) Object.assign(doc, { category: g.category, categorySource: "post" });
       } catch (err) {
-        doc.gist = post.caption.slice(0, 140) || "(no caption)";
+        // Slice by code points so an emoji at the cut isn't split into a broken character.
+        doc.gist = Array.from(post.caption).slice(0, 140).join("") || "(no caption)";
         doc.aiError = errorMessage(err);
       }
       await postsCol.replaceOne({ url: doc.url }, doc, { upsert: true });
@@ -147,10 +157,11 @@ export async function runPipeline(opts: RunOptions): Promise<DigestDoc> {
   const digests = db.collection<DigestDoc>(COLLECTIONS.digests);
   const current = await digests.findOne({ date }, { projection: { demo: 1 } });
   if (current && !current.demo && digest.demo) {
-    throw new Error(`A live digest already exists for ${date}; not overwriting it with demo data`);
+    log(`! a live digest already exists for ${date}; demo digest not saved`);
+    return { digest, saved: false };
   }
   await digests.replaceOne({ date }, digest, { upsert: true });
-  return digest;
+  return { digest, saved: true };
 }
 
 async function resolveCategory(

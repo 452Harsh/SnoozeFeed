@@ -5,32 +5,81 @@ import { Hono } from "hono";
 import { loadConfig } from "./config.js";
 import { COLLECTIONS, connect } from "./db.js";
 import { localDate } from "./pipeline.js";
-import type { DigestDoc } from "./types.js";
-import { renderArchive, renderDigest, renderMessage } from "./web/render.js";
+import type { DigestDoc, PageDoc, PostDoc } from "./types.js";
+import { greeting, renderArchive, renderDigest, renderMessage, type ArchiveEntry } from "./web/render.js";
+import { renderFeed } from "./web/rss.js";
 
 const cfg = loadConfig();
 const { client, db } = await connect(cfg);
 const digests = db.collection<DigestDoc>(COLLECTIONS.digests);
+const site = { publicUrl: cfg.publicUrl };
 
 const app = new Hono();
+
+/** Dates of the editions just before and after `date`, for previous/next links. */
+async function neighbours(date: string): Promise<{ prev?: string; next?: string }> {
+  const opts = { projection: { _id: 0, date: 1 } } as const;
+  const [prev, next] = await Promise.all([
+    digests.findOne({ date: { $lt: date } }, { ...opts, sort: { date: -1 } }),
+    digests.findOne({ date: { $gt: date } }, { ...opts, sort: { date: 1 } }),
+  ]);
+  return { prev: prev?.date, next: next?.date };
+}
 
 app.get("/healthz", (c) => c.text("ok"));
 
 app.get("/", async (c) => {
-  const today = localDate(new Date(), cfg.digestTimezone);
+  const now = new Date();
+  const today = localDate(now, cfg.digestTimezone);
   const latest = await digests.findOne({}, { sort: { date: -1 } });
   if (!latest) {
-    return c.html(renderMessage("No digest yet", "The first digest appears after the daily run (or pnpm demo)."));
+    return c.html(renderMessage("No digest yet", "The first digest appears after the daily run (or pnpm demo).", site));
   }
   const note = latest.date === today ? undefined : `No digest for today yet. Showing the most recent one.`;
-  return c.html(renderDigest(latest, { note }));
+  return c.html(
+    renderDigest(latest, {
+      note,
+      greeting: greeting(now, cfg.digestTimezone),
+      timeZone: cfg.digestTimezone,
+      edition: await neighbours(latest.date),
+      meta: { ...site, path: "/", current: "today" },
+    }),
+  );
 });
 
 app.get("/archive", async (c) => {
   const list = await digests
-    .find({}, { projection: { _id: 0, date: 1, demo: 1, stats: 1 }, sort: { date: -1 }, limit: 90 })
+    .find<ArchiveEntry>(
+      {},
+      { projection: { _id: 0, date: 1, demo: 1, stats: 1, "categories.category": 1 }, sort: { date: -1 }, limit: 90 },
+    )
     .toArray();
-  return c.html(renderArchive(list));
+  const feeds = await db
+    .collection<PageDoc>(COLLECTIONS.pages)
+    .find({ source: "instagram" }, { projection: { _id: 0, username: 1 }, sort: { username: 1 } })
+    .toArray();
+  return c.html(renderArchive(list, feeds.map((p) => p.username), site));
+});
+
+// RSS per Instagram page: /feeds/nasa.xml
+app.get("/feeds/:file", async (c) => {
+  const username = c.req.param("file").match(/^([A-Za-z0-9._]{1,30})\.xml$/)?.[1];
+  if (!username) return c.html(renderMessage("Not found", "Feeds look like /feeds/username.xml."), 404);
+
+  const posts = await db
+    .collection<PostDoc>(COLLECTIONS.posts)
+    .find({ username }, { sort: { postedAt: -1 }, limit: 50 })
+    .toArray();
+  if (!posts.length) return c.html(renderMessage("Not found", `No posts stored for @${username}.`), 404);
+
+  // Render terminates TLS at its proxy, so trust x-forwarded-proto for the self link.
+  const url = new URL(c.req.url);
+  const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(":", "");
+  const selfUrl = `${proto}://${url.host}${url.pathname}`;
+
+  c.header("Content-Type", "application/rss+xml; charset=utf-8");
+  c.header("Cache-Control", "public, max-age=900");
+  return c.body(renderFeed({ username, selfUrl, posts }));
 });
 
 app.get("/digest/:date", async (c) => {
@@ -39,15 +88,29 @@ app.get("/digest/:date", async (c) => {
     return c.html(renderMessage("Not found", "Dates look like 2026-10-23."), 404);
   }
   const digest = await digests.findOne({ date });
-  if (!digest) return c.html(renderMessage("Not found", `No digest for ${date}.`), 404);
-  return c.html(renderDigest(digest));
+  if (!digest) {
+    return c.html(
+      renderMessage("No edition that day", `There's no digest for ${date}. Past editions are in the archive.`, site, {
+        href: "/archive",
+        label: "Browse the archive",
+      }),
+      404,
+    );
+  }
+  return c.html(
+    renderDigest(digest, {
+      timeZone: cfg.digestTimezone,
+      edition: await neighbours(date),
+      meta: { ...site, path: `/digest/${date}` },
+    }),
+  );
 });
 
-app.notFound((c) => c.html(renderMessage("Not found", "That page doesn't exist."), 404));
+app.notFound((c) => c.html(renderMessage("Not found", "That page doesn't exist.", site), 404));
 
 app.onError((err, c) => {
   console.error(err);
-  return c.html(renderMessage("Something went wrong", "Try again in a moment."), 500);
+  return c.html(renderMessage("Something went wrong", "Try again in a moment.", site), 500);
 });
 
 const port = Number(process.env.PORT ?? 3000);

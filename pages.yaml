@@ -2,6 +2,19 @@
 # category is optional; without it Gemma picks one of:
 # News, Tech, Food, Fitness, Finance, Entertainment, Memes, Other
 - username: nasa
-  category: News
+  category: Science
 - username: fabriziorom
 - username: indiainlast24hr
+# Demo set: big public brand pages that post several times a day, one per topic.
+- username: verge
+  category: Tech
+- username: natgeo
+  category: Science
+- username: cnbc
+  category: Finance
+- username: buzzfeedtasty
+  category: Food
+- username: netflix
+  category: Entertainment
+- username: 9gag
+  category: Memes

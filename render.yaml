@@ -69,8 +69,13 @@ services:
         sync: false
       - key: DIGEST_TIMEZONE
         value: UTC
-      # Email (optional, Milestone 9)
+      # Email (optional, Milestone 9). Skipped if EMAIL_TO or RESEND_API_KEY is empty.
       - key: EMAIL_TO
         sync: false
+      - key: EMAIL_FROM
+        sync: false
       - key: RESEND_API_KEY
+        sync: false
+      # Web service URL for the "View full digest" link, e.g. https://slothscroll-web.onrender.com
+      - key: PUBLIC_URL
         sync: false
