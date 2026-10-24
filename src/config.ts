@@ -4,6 +4,8 @@
 
 export const CATEGORIES = [
   "News",
+  "Sports",
+  "Science",
   "Tech",
   "Food",
   "Fitness",

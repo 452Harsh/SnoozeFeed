@@ -24,6 +24,8 @@ export type SkipReason = "ad" | "repost" | "giveaway";
 
 export interface PostDoc extends ScrapedPost {
   category: Category;
+  /** "post": Gemma chose the category for this post; otherwise it was inherited from the page. */
+  categorySource?: "post" | "page";
   gist: string;
   skip?: SkipReason;
   /** Set when Gemma failed for this post and the gist is a caption fallback. */

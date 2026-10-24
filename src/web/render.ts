@@ -78,6 +78,8 @@ const SKIP_LABELS: Record<SkipReason, string> = { ad: "Ad", repost: "Repost", gi
 /** Section headlines: fixed editorial copy per category, never generated. */
 const SECTION_TITLES: Record<string, string> = {
   news: "Across the world today",
+  sports: "On the field",
+  science: "Science and discovery",
   tech: "From the world of tech",
   food: "On the table",
   fitness: "Moving well",
